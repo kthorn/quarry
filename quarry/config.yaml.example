@@ -1,0 +1,36 @@
+# === Core ===
+db_path: ./quarry.db
+seed_file: ./seed_data.yaml
+
+# === Role targeting ===
+ideal_role_description: |
+  Senior People Analytics or HR Technology leader role at a growth-stage
+  tech company. Ideally involves building or leading a function, not just
+  executing. Strong preference for companies doing interesting technical work.
+  Open to Principal IC or Senior Manager scope.
+
+similarity_threshold: 0.58
+dedup_window_days: 90
+
+# === Crawling ===
+crawl_hour: 8
+crawl_schedule_cron: "0 7 * * *"
+careers_crawl_cron: "0 8 * * 1"
+reflection_after_crawl: true
+
+# === Notifications ===
+digest_time: "08:30"
+
+# === LLM (Bedrock or OpenRouter) ===
+llm_provider: bedrock
+aws_region: us-east-1
+
+# === Embeddings ===
+embedding_model: all-MiniLM-L6-v2
+
+# User profile for LLM enrichment
+user_profile: |
+  Describe your background, target roles, and dealbreakers here.
+
+# === Digest ===
+digest_top_n: 20
