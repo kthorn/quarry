@@ -14,7 +14,7 @@ numpy>=1.26.0
 # Crawling
 httpx>=0.27.0
 beautifulsoup4>=4.12.0
-python-jobspy>=1.1.0
+git+https://github.com/cullenwatson/JobSpy.git
 
 # Utils
 python-dotenv>=1.0.0
