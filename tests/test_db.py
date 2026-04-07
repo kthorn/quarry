@@ -1,7 +1,5 @@
-import pytest
 import sqlite3
-from pathlib import Path
-from quarry.store.db import Database, init_db, get_db
+from quarry.store.db import Database, init_db
 
 
 def test_init_creates_tables(tmp_path):

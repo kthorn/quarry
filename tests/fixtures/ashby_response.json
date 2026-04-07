@@ -1,0 +1,14 @@
+{
+  "data": {
+    "jobs": [
+      {
+        "id": "job_abc123",
+        "title": "Staff Engineer",
+        "location": "Remote",
+        "absoluteUrl": "https://jobs.ashbyhq.com/testcorp/jobs/abc123",
+        "descriptionPlain": "We are hiring a staff engineer.",
+        "postedAt": "2024-01-15T10:00:00Z"
+      }
+    ]
+  }
+}

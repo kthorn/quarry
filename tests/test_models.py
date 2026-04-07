@@ -1,6 +1,4 @@
-import pytest
-from datetime import datetime
-from quarry.models import Company, RawPosting, JobPosting, Label, CrawlRun
+from quarry.models import Company, RawPosting, JobPosting
 
 
 def test_company_defaults():

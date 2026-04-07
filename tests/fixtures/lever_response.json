@@ -1,0 +1,24 @@
+[
+  {
+    "id": "abc123",
+    "text": "Software Engineer",
+    "descriptionPlain": "We are hiring a software engineer.",
+    "categories": {
+      "location": "San Francisco, CA",
+      "team": "Engineering",
+      "type": "full-time"
+    },
+    "hostedUrl": "https://jobs.lever.co/testcorp/abc123"
+  },
+  {
+    "id": "def456",
+    "text": "Product Manager",
+    "descriptionPlain": "We are hiring a product manager.",
+    "categories": {
+      "location": "Remote",
+      "team": "Product",
+      "type": "full-time"
+    },
+    "hostedUrl": "https://jobs.lever.co/testcorp/def456"
+  }
+]

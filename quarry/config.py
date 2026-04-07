@@ -49,6 +49,26 @@ class Settings(BaseSettings):
     # Digest
     digest_top_n: int = 20
 
+    # JobSpy crawler
+    jobspy_sites: list[str] = [
+        "indeed",
+        "glassdoor",
+        "google",
+        "zip_recruiter",
+        "linkedin",
+    ]
+    jobspy_results_wanted: int = 20
+    jobspy_hours_old: int = 168
+    jobspy_location: str = ""
+
+    # Crawler behavior
+    max_retries: int = 3
+    retry_base_delay: int = 2
+    max_concurrent_per_host: int = 3
+    request_timeout: int = 10
+    max_response_bytes: int = 1048576  # 1MB
+    max_redirects: int = 5
+
 
 def load_config(config_path: Path | None = None) -> Settings:
     """Load config from YAML file, with env var overrides.

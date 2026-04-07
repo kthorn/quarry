@@ -1,6 +1,4 @@
-import pytest
 import os
-from pathlib import Path
 
 os.environ["AWS_REGION"] = "us-west-2"  # Test env override
 

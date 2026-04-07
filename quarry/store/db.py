@@ -57,7 +57,7 @@ class Database:
                     company.added_reason,
                 ),
             )
-            return cursor.lastrowid
+            return cursor.lastrowid or 0
 
     def get_company(self, company_id: int) -> models.Company | None:
         sql = "SELECT * FROM companies WHERE id = ?"
@@ -129,7 +129,7 @@ class Database:
                     posting.last_seen_at,
                 ),
             )
-            return cursor.lastrowid
+            return cursor.lastrowid or 0
 
     def posting_exists(self, company_id: int, title_hash: str) -> bool:
         sql = "SELECT 1 FROM job_postings WHERE company_id = ? AND title_hash = ?"
@@ -165,7 +165,7 @@ class Database:
                     label.label_source,
                 ),
             )
-            return cursor.lastrowid
+            return cursor.lastrowid or 0
 
     def insert_crawl_run(self, run: models.CrawlRun) -> int:
         sql = """
@@ -186,7 +186,7 @@ class Database:
                     run.error_message,
                 ),
             )
-            return cursor.lastrowid
+            return cursor.lastrowid or 0
 
     def insert_search_query(self, query: models.SearchQuery) -> int:
         sql = """
@@ -207,7 +207,7 @@ class Database:
                     query.positive_labels,
                 ),
             )
-            return cursor.lastrowid
+            return cursor.lastrowid or 0
 
     def get_active_search_queries(self) -> list[models.SearchQuery]:
         sql = "SELECT * FROM search_queries WHERE active = 1"
@@ -230,7 +230,7 @@ class Database:
                     action.rationale,
                 ),
             )
-            return cursor.lastrowid
+            return cursor.lastrowid or 0
 
     def get_setting(self, key: str) -> str | None:
         sql = "SELECT value FROM settings WHERE key = ?"

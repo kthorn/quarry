@@ -1,0 +1,22 @@
+{
+  "jobs": [
+    {
+      "id": 12345,
+      "title": "Senior Software Engineer",
+      "location": {"name": "New York, NY"},
+      "absolute_url": "https://boards.greenhouse.io/testcorp/jobs/12345",
+      "content": "<p>We are hiring a Senior Software Engineer.</p>",
+      "metadata": [],
+      "updated_at": "2024-01-15T10:00:00Z"
+    },
+    {
+      "id": 12346,
+      "title": "Product Manager",
+      "location": {"name": "Remote"},
+      "absolute_url": "https://boards.greenhouse.io/testcorp/jobs/12346",
+      "content": "<p>We are hiring a Product Manager.</p>",
+      "metadata": [],
+      "updated_at": "2024-01-14T10:00:00Z"
+    }
+  ]
+}
