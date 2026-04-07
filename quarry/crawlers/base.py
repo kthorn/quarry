@@ -5,14 +5,13 @@ from typing import TYPE_CHECKING
 import httpx
 from tenacity import (
     retry,
+    retry_if_exception_type,
     stop_after_attempt,
     wait_exponential,
-    retry_if_exception_type,
 )
 
 from quarry.config import settings
 from quarry.models import Company, RawPosting
-
 
 if TYPE_CHECKING:
     from quarry.models import Company, RawPosting

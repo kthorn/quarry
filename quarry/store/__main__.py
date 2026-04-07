@@ -1,6 +1,7 @@
 import click
-from quarry.store.db import init_db
+
 from quarry.config import settings
+from quarry.store.db import init_db
 
 
 @click.group()

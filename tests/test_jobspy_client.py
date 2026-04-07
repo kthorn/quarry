@@ -1,4 +1,5 @@
 import pytest
+
 from quarry.crawlers.jobspy_client import JobSpyClient
 
 

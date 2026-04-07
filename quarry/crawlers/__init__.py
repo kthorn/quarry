@@ -7,11 +7,11 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from quarry.models import Company
 
+from quarry.crawlers.ashby import AshbyCrawler
 from quarry.crawlers.base import BaseCrawler
+from quarry.crawlers.careers_page import CareersPageCrawler
 from quarry.crawlers.greenhouse import GreenhouseCrawler
 from quarry.crawlers.lever import LeverCrawler
-from quarry.crawlers.ashby import AshbyCrawler
-from quarry.crawlers.careers_page import CareersPageCrawler
 
 
 class CrawlerType(str, Enum):

@@ -1,4 +1,4 @@
-from quarry.models import Company, RawPosting, JobPosting
+from quarry.models import Company, JobPosting, RawPosting
 
 
 def test_company_defaults():

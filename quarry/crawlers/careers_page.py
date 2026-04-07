@@ -5,8 +5,8 @@ import logging
 import socket
 from urllib.parse import urlparse
 
-from bs4 import BeautifulSoup
 import httpx
+from bs4 import BeautifulSoup
 
 from quarry.crawlers.base import BaseCrawler
 from quarry.models import Company, RawPosting

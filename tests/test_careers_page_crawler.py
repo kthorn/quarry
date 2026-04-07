@@ -1,4 +1,5 @@
 import pytest
+
 from quarry.crawlers.careers_page import CareersPageCrawler
 from quarry.models import Company
 

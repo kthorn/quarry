@@ -7,7 +7,6 @@ from jobspy import scrape_jobs
 from quarry.config import settings
 from quarry.models import Company, RawPosting
 
-
 SITE_NAME_TO_SOURCE_TYPE: dict[str, str] = {
     "indeed": "indeed",
     "glassdoor": "glassdoor",

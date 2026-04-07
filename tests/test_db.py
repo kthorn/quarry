@@ -1,4 +1,5 @@
 import sqlite3
+
 from quarry.store.db import Database, init_db
 
 

@@ -1,4 +1,5 @@
 from abc import ABC
+
 from quarry.crawlers.base import BaseCrawler
 
 
