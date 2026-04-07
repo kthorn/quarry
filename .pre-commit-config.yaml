@@ -1,0 +1,16 @@
+repos:
+  - repo: local
+    hooks:
+      - id: ruff
+        name: ruff
+        entry: ruff check .
+        language: system
+        types: [python]
+        pass_filenames: false
+
+      - id: pyright
+        name: pyright
+        entry: bash -c "cd /home/kurtt/job-search && PYTHONPATH=/home/kurtt/job-search pyright quarry/"
+        language: system
+        types: [python]
+        pass_filenames: false
