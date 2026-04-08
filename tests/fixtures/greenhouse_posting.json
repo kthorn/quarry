@@ -1,0 +1,10 @@
+{
+  "company_id": 1,
+  "title": "Senior Software Engineer - Remote",
+  "url": "https://boards.greenhouse.io/example/jobs/12345",
+  "description": "<div><p>We are looking for a <strong>Senior Software Engineer</strong> to join our team.</p><p>This is a <em>remote</em> position. Work from home!</p><h2>Requirements</h2><ul><li>5+ years experience</li><li>Python expertise</li></ul></div>",
+  "location": "San Francisco, CA, USA or Remote",
+  "posted_at": "2024-01-15T10:30:00Z",
+  "source_id": "12345",
+  "source_type": "greenhouse"
+}
