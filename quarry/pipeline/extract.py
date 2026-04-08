@@ -12,6 +12,8 @@ import re
 
 from bs4 import BeautifulSoup
 
+from quarry.models import JobPosting, RawPosting
+
 
 def strip_html(html: str) -> str:
     """Remove HTML tags and return plain text.
@@ -177,3 +179,50 @@ def hash_title(title: str) -> str:
 
     # Hash with SHA256
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def extract(raw: RawPosting) -> JobPosting:
+    """Extract and transform RawPosting into JobPosting.
+
+    Performs:
+    - HTML stripping and text normalization
+    - Remote work detection
+    - Location normalization
+    - Title hashing for deduplication
+
+    Args:
+        raw: RawPosting from crawler
+
+    Returns:
+        JobPosting ready for database storage
+    """
+    # Process description
+    description = None
+    if raw.description:
+        description = strip_html(raw.description)
+
+    # Detect remote status from combined signals
+    remote = None
+    combined_text = " ".join(filter(None, [raw.title, description, raw.location]))
+    if combined_text:
+        remote = detect_remote(combined_text)
+
+    # Normalize location
+    location = normalize_location(raw.location)
+
+    # Hash title for deduplication
+    title_hash = hash_title(raw.title)
+
+    # Create JobPosting
+    return JobPosting(
+        company_id=raw.company_id,
+        title=raw.title,
+        title_hash=title_hash,
+        url=raw.url,
+        description=description,
+        location=location,
+        remote=remote,
+        posted_at=raw.posted_at,
+        source_id=raw.source_id,
+        source_type=raw.source_type,
+    )

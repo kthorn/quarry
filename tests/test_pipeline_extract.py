@@ -1,7 +1,11 @@
 """Tests for extraction pipeline."""
 
+from datetime import datetime
+
+from quarry.models import JobPosting, RawPosting
 from quarry.pipeline.extract import (
     detect_remote,
+    extract,
     hash_title,
     normalize_location,
     normalize_whitespace,
@@ -175,3 +179,74 @@ def test_hash_title_handles_empty():
 def test_hash_title_handles_whitespace_only():
     result = hash_title("   ")
     assert result == ""
+
+
+def test_extract_converts_raw_to_job_posting():
+    raw = RawPosting(
+        company_id=1,
+        title="Senior Software Engineer",
+        url="https://example.com/job/123",
+        description="<p>Work on <strong>amazing</strong> things</p>",
+        location="San Francisco, CA, USA",
+        source_type="greenhouse",
+    )
+
+    result = extract(raw)
+
+    assert isinstance(result, JobPosting)
+    assert result.company_id == 1
+    assert result.title == "Senior Software Engineer"
+    assert result.url == "https://example.com/job/123"
+    assert result.description == "Work on amazing things"
+    assert result.location == "San Francisco, CA, US"
+    assert result.remote is None
+    assert len(result.title_hash) == 64
+
+
+def test_extract_detects_remote():
+    raw = RawPosting(
+        company_id=1,
+        title="Remote Software Engineer",
+        url="https://example.com/job/456",
+        description="This is a remote position working from home",
+        location="Remote",
+        source_type="greenhouse",
+    )
+
+    result = extract(raw)
+
+    assert result.remote is True
+
+
+def test_extract_handles_missing_fields():
+    raw = RawPosting(
+        company_id=1,
+        title="Software Engineer",
+        url="https://example.com/job/789",
+        source_type="lever",
+    )
+
+    result = extract(raw)
+
+    assert result.description is None
+    assert result.location is None
+    assert result.remote is None
+
+
+def test_extract_preserves_metadata():
+    posted_at = datetime(2024, 1, 15, 10, 30)
+    raw = RawPosting(
+        company_id=1,
+        title="Engineer",
+        url="https://example.com/job",
+        description="Description",
+        posted_at=posted_at,
+        source_id="abc123",
+        source_type="greenhouse",
+    )
+
+    result = extract(raw)
+
+    assert result.posted_at == posted_at
+    assert result.source_id == "abc123"
+    assert result.source_type == "greenhouse"
