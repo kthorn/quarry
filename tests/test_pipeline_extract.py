@@ -126,3 +126,14 @@ def test_normalize_location_handles_empty():
 def test_normalize_location_handles_none():
     result = normalize_location(None)
     assert result is None
+
+
+def test_normalize_location_standardizes_uk():
+    location = "London, UK"
+    result = normalize_location(location)
+    assert result == "London, United Kingdom"
+
+
+def test_normalize_location_handles_whitespace_only():
+    result = normalize_location("   ")
+    assert result is None
