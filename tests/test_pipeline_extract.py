@@ -2,6 +2,7 @@
 
 from quarry.pipeline.extract import (
     detect_remote,
+    hash_title,
     normalize_location,
     normalize_whitespace,
     strip_html,
@@ -137,3 +138,30 @@ def test_normalize_location_standardizes_uk():
 def test_normalize_location_handles_whitespace_only():
     result = normalize_location("   ")
     assert result is None
+
+
+def test_hash_title_returns_consistent_hash():
+    title = "Senior Software Engineer"
+    hash1 = hash_title(title)
+    hash2 = hash_title(title)
+    assert hash1 == hash2
+
+
+def test_hash_title_normalizes_case():
+    title1 = "Senior Software Engineer"
+    title2 = "SENIOR SOFTWARE ENGINEER"
+    assert hash_title(title1) == hash_title(title2)
+
+
+def test_hash_title_normalizes_whitespace():
+    title1 = "Senior  Software   Engineer"
+    title2 = "Senior Software Engineer"
+    assert hash_title(title1) == hash_title(title2)
+
+
+def test_hash_title_is_sha256():
+    title = "Software Engineer"
+    result = hash_title(title)
+    # SHA256 produces 64 character hex string
+    assert len(result) == 64
+    assert all(c in "0123456789abcdef" for c in result)

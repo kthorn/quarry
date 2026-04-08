@@ -7,6 +7,7 @@ This module handles:
 - Title hashing for deduplication
 """
 
+import hashlib
 import re
 
 from bs4 import BeautifulSoup
@@ -151,3 +152,25 @@ def normalize_location(location: str | None) -> str | None:
     location = re.sub(r"\s*,\s*", ", ", location)
 
     return location if location else None
+
+
+def hash_title(title: str) -> str:
+    """Create a hash of job title for deduplication.
+
+    Normalizes title (lowercase, collapse whitespace) before hashing.
+    Uses SHA256 for collision resistance.
+
+    Args:
+        title: Job title to hash
+
+    Returns:
+        Hex string of SHA256 hash
+    """
+    if not title:
+        return ""
+
+    # Normalize: lowercase and collapse whitespace
+    normalized = re.sub(r"\s+", " ", title.lower().strip())
+
+    # Hash with SHA256
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
