@@ -136,6 +136,19 @@ class Database:
         rows = self.execute(sql, (company_id, title_hash))
         return len(rows) > 0
 
+    def posting_exists_by_url(self, url: str) -> bool:
+        """Check if a posting with the given URL already exists.
+
+        Args:
+            url: Job posting URL to check
+
+        Returns:
+            True if posting exists, False otherwise
+        """
+        sql = "SELECT 1 FROM job_postings WHERE url = ?"
+        rows = self.execute(sql, (url,))
+        return len(rows) > 0
+
     def get_postings(
         self, status: str | None = None, limit: int = 100
     ) -> list[models.JobPosting]:
