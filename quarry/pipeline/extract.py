@@ -100,18 +100,18 @@ def detect_remote(text: str) -> bool | None:
         r"\bmust (be )?(located|based) in\b",
     ]
 
-    # Check for remote indicators
-    has_remote = any(re.search(p, text_lower) for p in remote_patterns)
+    # Check for onsite indicators
     has_onsite = any(re.search(p, text_lower) for p in onsite_patterns)
 
-    # Check if "remote" appears to be in a company name (potential false positive)
-    has_company_name = re.search(
-        r"\bremote\s+(inc|corp|llc|ltd|co|company)\b", text_lower
+    # Check for remote indicators, excluding "remote" in company name context
+    has_other_remote = any(
+        re.search(p, text_lower) for p in remote_patterns if p != r"\bremote\b"
     )
-
-    # If "remote" is only in company name and no other indicators, unclear
-    if has_company_name and not has_onsite:
-        return None
+    has_remote_excluding_company = (
+        re.search(r"\bremote\b(?!\s+(inc|corp|llc|ltd|co|company)\b)", text_lower)
+        is not None
+    )
+    has_remote = has_remote_excluding_company or has_other_remote
 
     # If both remote and onsite present, prefer onsite (more specific)
     if has_remote and has_onsite:
