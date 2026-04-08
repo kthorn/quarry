@@ -164,13 +164,16 @@ def hash_title(title: str) -> str:
         title: Job title to hash
 
     Returns:
-        Hex string of SHA256 hash
+        Hex string of SHA256 hash, or empty string for empty/whitespace-only titles
     """
     if not title:
         return ""
 
     # Normalize: lowercase and collapse whitespace
     normalized = re.sub(r"\s+", " ", title.lower().strip())
+
+    if not normalized:
+        return ""
 
     # Hash with SHA256
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()

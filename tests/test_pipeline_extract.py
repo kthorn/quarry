@@ -165,3 +165,13 @@ def test_hash_title_is_sha256():
     # SHA256 produces 64 character hex string
     assert len(result) == 64
     assert all(c in "0123456789abcdef" for c in result)
+
+
+def test_hash_title_handles_empty():
+    result = hash_title("")
+    assert result == ""
+
+
+def test_hash_title_handles_whitespace_only():
+    result = hash_title("   ")
+    assert result == ""
