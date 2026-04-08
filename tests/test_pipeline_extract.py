@@ -1,6 +1,11 @@
 """Tests for extraction pipeline."""
 
-from quarry.pipeline.extract import detect_remote, normalize_whitespace, strip_html
+from quarry.pipeline.extract import (
+    detect_remote,
+    normalize_location,
+    normalize_whitespace,
+    strip_html,
+)
 
 
 def test_strip_html_removes_tags():
@@ -86,4 +91,38 @@ def test_detect_remote_company_name_without_onsite():
     result = detect_remote(text)
     # Should detect "remote" in company name as potential false positive
     # but without onsite indicators, returns None (unclear)
+    assert result is None
+
+
+def test_normalize_location_standardizes_us():
+    location = "San Francisco, CA, USA"
+    result = normalize_location(location)
+    assert result == "San Francisco, CA, US"
+
+
+def test_normalize_location_removes_extra_spaces():
+    location = "New  York ,  NY"
+    result = normalize_location(location)
+    assert result == "New York, NY"
+
+
+def test_normalize_location_handles_remote():
+    location = "Remote - US"
+    result = normalize_location(location)
+    assert result == "Remote - US"
+
+
+def test_normalize_location_handles_multiple_locations():
+    location = "San Francisco, CA or New York, NY"
+    result = normalize_location(location)
+    assert result == "San Francisco, CA or New York, NY"
+
+
+def test_normalize_location_handles_empty():
+    result = normalize_location("")
+    assert result is None
+
+
+def test_normalize_location_handles_none():
+    result = normalize_location(None)
     assert result is None

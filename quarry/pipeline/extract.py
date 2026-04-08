@@ -124,3 +124,30 @@ def detect_remote(text: str) -> bool | None:
         return False
 
     return None
+
+
+def normalize_location(location: str | None) -> str | None:
+    """Normalize location string.
+
+    Standardizes country codes, removes extra whitespace, and handles common patterns.
+
+    Args:
+        location: Location string to normalize
+
+    Returns:
+        Normalized location string or None if empty
+    """
+    if not location:
+        return None
+
+    # Strip and collapse whitespace
+    location = re.sub(r"\s+", " ", location.strip())
+
+    # Standardize country codes
+    location = re.sub(r"\bUSA?\b", "US", location, flags=re.IGNORECASE)
+    location = re.sub(r"\bUK\b", "United Kingdom", location, flags=re.IGNORECASE)
+
+    # Remove extra spaces around commas
+    location = re.sub(r"\s*,\s*", ", ", location)
+
+    return location if location else None
