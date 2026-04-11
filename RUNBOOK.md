@@ -78,6 +78,44 @@ python -m quarry.agent.scheduler
 python -m quarry.ui.app
 ```
 
+## Company Resolution
+
+The resolve pipeline automatically discovers domain, careers_url, and ATS type for companies that lack them. It runs as part of `run_once` before crawling.
+
+```bash
+# Resolve all unresolved companies
+python -m quarry.resolve resolve
+
+# Resolve a single company
+python -m quarry.resolve resolve --company "Acme Inc"
+
+# Retry previously failed companies
+python -m quarry.resolve resolve --retry-failed
+
+# Re-detect ATS type for generic/unknown companies
+python -m quarry.resolve resolve --redetect-ats
+```
+
+### Adding Companies via CLI
+
+```bash
+# Add by name (auto-resolves domain, careers URL, and ATS type)
+python -m quarry.store add-company --name "Acme Inc"
+
+# Add with domain (skips domain resolution)
+python -m quarry.store add-company --name "Acme Inc" --domain acme.com
+
+# Add with careers URL (auto-detects ATS type)
+python -m quarry.store add-company --name "Acme Inc" --careers-url "https://boards.greenhouse.io/acme"
+```
+
+### Resolution Pipeline Steps
+
+1. **Domain resolution** — if `domain` is empty, guesses `.com` domain and probes via HEAD request
+2. **Careers URL resolution** — if `careers_url` is empty, probes `/careers`, `/jobs`, etc. on the domain
+3. **ATS detection** — if `ats_type` is `unknown`, checks URL patterns (Greenhouse, Lever, Ashby) then HTML signatures; falls back to `generic`
+4. Companies that fail 3 resolve attempts are marked `failed`; use `--retry-failed` to reset them
+
 ## Testing & Linting
 
 ```bash
