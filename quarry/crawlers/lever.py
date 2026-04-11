@@ -4,7 +4,7 @@ from typing import Any
 
 import httpx
 
-from quarry.crawlers.base import BaseCrawler
+from quarry.crawlers.base import BaseCrawler, Crawl404Error
 from quarry.models import Company, RawPosting
 
 logger = logging.getLogger(__name__)
@@ -29,6 +29,8 @@ class LeverCrawler(BaseCrawler):
                 response.raise_for_status()
                 jobs = response.json()
             except httpx.HTTPStatusError as e:
+                if e.response.status_code == 404:
+                    raise Crawl404Error(company.name, url) from e
                 logger.error(f"HTTP error fetching {company.name}: {e}")
                 return []
             except httpx.RequestError as e:

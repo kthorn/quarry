@@ -7,12 +7,12 @@
 pip install -e ".[dev]" -c constraints.txt
 
 # Setup
-cp config.yaml.example config.yaml
+cp quarry/config.yaml.example quarry/config.yaml
 python -m quarry.store init          # Initialize SQLite db
 python -m quarry.agent.tools seed    # Seed initial data
 
 # Run
-python -m quarry.agent.agent --run-once   # Single search cycle
+python -m quarry.agent run-once           # Single search cycle
 python -m quarry.agent.scheduler          # Continuous scheduler
 python -m quarry.ui.app                    # Labeling UI (Flask)
 python -m quarry.store --help              # CLI commands

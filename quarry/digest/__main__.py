@@ -19,10 +19,15 @@ from quarry.store.db import get_db
 def main(mark_seen: bool, limit: int | None, output: str | None):
     """Build and write a digest of new job postings."""
     import logging
+    import os
 
+    os.environ["TQDM_DISABLE"] = "1"
+    os.environ["TRANSFORMERS_VERBOSITY"] = "error"
     logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s"
+        level=logging.WARNING, format="%(asctime)s %(name)s %(levelname)s %(message)s"
     )
+    for noisy in ("httpx", "httpcore", "transformers", "sentence_transformers"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
 
     from quarry.digest.digest import (
         build_digest,

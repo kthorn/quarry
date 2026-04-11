@@ -1,9 +1,9 @@
 companies:
   - name: OpenAI
     domain: openai.com
-    careers_url: https://openai.com/careers
-    ats_type: greenhouse
-    ats_slug: openai
+    careers_url: https://openai.com/careers/search
+    ats_type: generic
+    ats_slug: null
     crawl_priority: 8
     added_reason: Leading AI lab, GPT/Codex
 
@@ -159,13 +159,13 @@ companies:
     crawl_priority: 6
     added_reason: Field-ready robotic AI
 
-  - name: Wandb
-    domain: wandb.ai
-    careers_url: https://boards.greenhouse.io/wandb
-    ats_type: greenhouse
-    ats_slug: wandb
+  - name: CoreWeave
+    domain: coreweave.com
+    careers_url: https://coreweave.com/careers
+    ats_type: generic
+    ats_slug: null
     crawl_priority: 6
-    added_reason: MLOps platform, experiment tracking
+    added_reason: GPU cloud infrastructure, former Wandb now part of CoreWeave
 
   - name: Runway
     domain: runwayml.com

@@ -17,6 +17,15 @@ if TYPE_CHECKING:
     from quarry.models import Company, RawPosting
 
 
+class Crawl404Error(Exception):
+    """Raised when an ATS crawler gets a 404, indicating wrong ats_type or ats_slug."""
+
+    def __init__(self, company_name: str, url: str):
+        self.company_name = company_name
+        self.url = url
+        super().__init__(f"404 for {company_name}: {url}")
+
+
 def should_retry(exception: Exception) -> bool:
     """Determine if exception should trigger retry."""
     if isinstance(exception, httpx.TimeoutException):

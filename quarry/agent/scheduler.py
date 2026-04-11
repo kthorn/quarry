@@ -5,13 +5,16 @@ Usage:
 """
 
 import asyncio
+import csv
 import logging
 from datetime import datetime, timezone
+from pathlib import Path
 
 import numpy as np
 
 from quarry.config import settings
 from quarry.crawlers import get_crawler
+from quarry.crawlers.base import Crawl404Error
 from quarry.crawlers.jobspy_client import JobSpyClient
 from quarry.models import Company, CrawlRun, JobPosting, RawPosting
 from quarry.pipeline.embedder import (
@@ -25,6 +28,15 @@ from quarry.pipeline.filter import apply_keyword_blocklist, filter_posting
 from quarry.store.db import Database
 
 log = logging.getLogger(__name__)
+
+CRAWL_LOG_COLUMNS = [
+    "title",
+    "source",
+    "url",
+    "location",
+    "similarity_score",
+    "status",
+]
 
 
 def _ensure_ideal_embedding(db: Database) -> None:
@@ -44,7 +56,8 @@ def _ensure_ideal_embedding(db: Database) -> None:
 def _crawl_company(company: Company) -> list[RawPosting]:
     """Crawl a single company's job postings (sync wrapper).
 
-    Raises: Re-raises exceptions so the caller can handle error tracking.
+    Raises Crawl404Error if the ATS endpoint returns 404.
+    Re-raises other exceptions so the caller can handle error tracking.
     """
     crawler = get_crawler(company)
     result = asyncio.run(crawler.crawl(company))
@@ -70,7 +83,10 @@ def _crawl_search_queries(db: Database) -> list[RawPosting]:
         lower = name.lower()
         if lower in seen_companies:
             return seen_companies[lower]
-        return Company(name=name)
+        new_company = Company(name=name, active=True)
+        new_company.id = db.insert_company(new_company)
+        seen_companies[lower] = new_company
+        return new_company
 
     for q in queries:
         log.info("Searching: %s", q.query_text)
@@ -89,20 +105,27 @@ def _process_posting(
     db: Database,
     blocklist: list[str],
     ideal_embedding: np.ndarray | None,
-) -> tuple[JobPosting | None, str]:
+) -> tuple[JobPosting | None, str, float]:
     """Process a single RawPosting through extract -> dedup -> embed -> filter.
 
-    Returns (JobPosting or None, status string: "new", "duplicate", "duplicate_url", "blocklist", "filtered").
+    Returns (JobPosting or None, status string, similarity_score).
+    Status is one of: "new", "duplicate", "duplicate_url", "blocklist", "low_similarity".
     """
     posting = extract(raw)
 
     if db.posting_exists(posting.company_id, posting.title_hash):
-        return None, "duplicate"
+        return None, "duplicate", 0.0
     if db.posting_exists_by_url(posting.url):
-        return None, "duplicate_url"
+        return None, "duplicate_url", 0.0
 
     if not apply_keyword_blocklist(raw, blocklist):
-        return None, "blocklist"
+        similarity = 0.0
+        if ideal_embedding is not None:
+            emb = embed_posting(raw)
+            norm_e = np.linalg.norm(emb)
+            norm_i = np.linalg.norm(ideal_embedding)
+            similarity = float(np.dot(emb, ideal_embedding) / (norm_e * norm_i + 1e-9))
+        return None, "blocklist", round(similarity, 4)
 
     if ideal_embedding is None:
         similarity = 0.0
@@ -110,35 +133,45 @@ def _process_posting(
         result = filter_posting(raw, ideal_embedding, blocklist=blocklist)
         similarity = result.similarity_score or 0.0
         if not result.passed:
-            return None, result.skip_reason or "filtered"
+            return None, result.skip_reason or "filtered", round(similarity, 4)
 
     posting.similarity_score = similarity
     if ideal_embedding is not None:
         emb = embed_posting(raw)
         posting.embedding = serialize_embedding(emb)
 
-    return posting, "new"
+    return posting, "new", round(similarity, 4)
 
 
-def _resolve_company_id(raw: RawPosting, db: Database) -> int | None:
-    """Try to match a JobSpy posting to an existing company by name.
+def _resolve_company_id(raw: RawPosting, db: Database) -> int:
+    """Match a posting to an existing company, or create one if not found.
 
-    Returns company ID if found, None otherwise.
+    Returns:
+        company ID (always valid — creates a new company if needed)
     """
-    title = raw.title
-    if " at " in title:
-        company_name = title.split(" at ")[-1].strip()
+    company_name: str | None = None
+    if " at " in raw.title:
+        company_name = raw.title.split(" at ")[-1].strip()
+
+    if company_name:
         companies = db.get_all_companies(active_only=False)
         for c in companies:
             if c.name.lower() == company_name.lower():
+                assert c.id is not None
                 return c.id
-    return None
+
+    if not company_name:
+        company_name = "Unknown"
+
+    new_company = Company(name=company_name, active=True)
+    return db.insert_company(new_company)
 
 
 def run_once(db: Database) -> dict:
     """Run a single crawl cycle: crawl all companies + search queries, process, store.
 
-    Returns a summary dict with counts.
+    Returns a summary dict with counts. Also writes a CSV crawl log with every
+    posting found and its similarity score.
     """
     _ensure_ideal_embedding(db)
     ideal_embedding = get_ideal_embedding(db)
@@ -153,6 +186,27 @@ def run_once(db: Database) -> dict:
     total_filtered = 0
     companies_crawled = 0
     companies_errored = 0
+
+    log_path = Path(
+        f"crawl_log_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')}.csv"
+    )
+    log_file = open(log_path, "w", newline="", encoding="utf-8")
+    writer = csv.DictWriter(log_file, fieldnames=CRAWL_LOG_COLUMNS)
+    writer.writeheader()
+
+    def _log_posting(
+        raw: RawPosting, status: str, similarity: float, source: str
+    ) -> None:
+        writer.writerow(
+            {
+                "title": raw.title,
+                "source": source,
+                "url": raw.url,
+                "location": raw.location or "",
+                "similarity_score": similarity,
+                "status": status,
+            }
+        )
 
     for company in companies:
         run = CrawlRun(
@@ -171,9 +225,10 @@ def run_once(db: Database) -> dict:
 
             company_new = 0
             for raw in postings:
-                job_posting, status = _process_posting(
+                job_posting, status, similarity = _process_posting(
                     raw, db, blocklist, ideal_embedding
                 )
+                _log_posting(raw, status, similarity, company.name)
                 if status == "new" and job_posting:
                     db.insert_posting(job_posting)
                     company_new += 1
@@ -185,6 +240,15 @@ def run_once(db: Database) -> dict:
 
             run.postings_new = company_new
             run.status = "success"
+        except Crawl404Error:
+            log.warning("ATS 404 for %s — resetting ats_type to unknown", company.name)
+            company.ats_type = "unknown"
+            company.ats_slug = None
+            db.update_company(company)
+            companies_errored += 1
+            run.status = "error"
+            run.postings_found = 0
+            run.postings_new = 0
         except Exception as e:
             log.error("Failed to crawl %s: %s", company.name, e)
             companies_errored += 1
@@ -198,12 +262,13 @@ def run_once(db: Database) -> dict:
     total_found += len(search_postings)
 
     for raw in search_postings:
-        job_posting, status = _process_posting(raw, db, blocklist, ideal_embedding)
+        job_posting, status, similarity = _process_posting(
+            raw, db, blocklist, ideal_embedding
+        )
+        _log_posting(raw, status, similarity, "search")
         if status == "new" and job_posting:
             if not job_posting.company_id:
-                resolved = _resolve_company_id(raw, db)
-                if resolved is not None:
-                    job_posting.company_id = resolved
+                job_posting.company_id = _resolve_company_id(raw, db)
             db.insert_posting(job_posting)
             total_new += 1
         elif status.startswith("duplicate"):
@@ -211,6 +276,7 @@ def run_once(db: Database) -> dict:
         else:
             total_filtered += 1
 
+    log_file.close()
     summary = {
         "companies_crawled": companies_crawled,
         "companies_errored": companies_errored,
@@ -218,6 +284,7 @@ def run_once(db: Database) -> dict:
         "total_new": total_new,
         "total_duplicates": total_duplicates,
         "total_filtered": total_filtered,
+        "crawl_log": str(log_path),
     }
     log.info("Run complete: %s", summary)
     return summary

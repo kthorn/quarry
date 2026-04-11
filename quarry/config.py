@@ -78,7 +78,8 @@ def load_config(config_path: Path | None = None) -> Settings:
     import os
 
     if config_path is None:
-        config_path = Path("config.yaml")
+        candidates = [Path("config.yaml"), Path("quarry/config.yaml")]
+        config_path = next((c for c in candidates if c.exists()), candidates[0])
 
     yaml_config = {}
     if config_path.exists():

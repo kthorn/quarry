@@ -65,7 +65,7 @@ def embed_text(text: str) -> np.ndarray:
         return np.zeros(dim, dtype=np.float32)
 
     model = _get_model()
-    embedding = model.encode(text, normalize_embeddings=True)
+    embedding = model.encode(text, normalize_embeddings=True, show_progress_bar=False)
     return np.asarray(embedding, dtype=np.float32)
 
 

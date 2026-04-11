@@ -8,7 +8,7 @@ from urllib.parse import urlparse
 import httpx
 from bs4 import BeautifulSoup
 
-from quarry.crawlers.base import BaseCrawler
+from quarry.crawlers.base import BaseCrawler, Crawl404Error
 from quarry.models import Company, RawPosting
 
 logger = logging.getLogger(__name__)
@@ -109,6 +109,8 @@ class CareersPageCrawler(BaseCrawler):
                     html = b"".join(chunks).decode("utf-8", errors="ignore")
 
         except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                raise Crawl404Error(company.name, sanitized_url) from e
             logger.error(f"HTTP error fetching {company.name}: {e}")
             return []
         except httpx.RequestError as e:
