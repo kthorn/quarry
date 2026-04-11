@@ -57,14 +57,16 @@ Deprecate `jobspy_location` in `Settings` — when `location_filter` is present,
 4. If `accept_nearby` is True and any `nearby_cities` entry appears as a case-insensitive substring in `posting.location` → pass
 5. Otherwise → reject with `skip_reason="location"`
 
+Edge case: if both `accept_remote=False` and `accept_nearby=False`, all jobs with a known location are rejected. This is intentionally restrictive — the user has said they don't want remote or nearby jobs.
+
 ### Pipeline placement
 
 ```
 Current:  extract → dedup → keyword_blocklist → similarity → (store)
-New:      extract → dedup → keyword_blocklist → similarity → location_filter → (store)
+New:      extract → dedup → keyword_blocklist → location_filter → similarity → (store)
 ```
 
-The location filter runs after similarity checking because similarity is the more expensive operation — no point computing embeddings for jobs that will fail a cheap string check. However, location data (from `posting.location`) comes from `extract()`, which runs before both filters, so the data is available regardless of order.
+The location filter runs BEFORE similarity checking because substring matching is cheap while embedding computation is expensive. Location data (from `posting.location`) comes from `extract()`, which runs before both filters. Running the cheap filter first avoids computing embeddings for jobs that would be rejected by location anyway.
 
 > **Note:** The current keyword_blocklist filter is non-functional (`settings.keyword_blocklist` is never defined). This design doesn't address that but places the location filter in the same layer.
 
