@@ -1,0 +1,4 @@
+# Pin torch to CPU-only build to avoid pulling CUDA/NVIDIA dependencies.
+# Install with: pip install -e ".[dev]" -c constraints.txt
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.11.0+cpu

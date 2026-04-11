@@ -3,8 +3,8 @@
 ## Key Commands
 
 ```bash
-# Install (run from quarry/ directory)
-pip install -r requirements.txt
+# Install (uses CPU-only torch to avoid CUDA dependencies)
+pip install -e ".[dev]" -c constraints.txt
 
 # Setup
 cp config.yaml.example config.yaml
@@ -30,13 +30,24 @@ pre-commit install
 
 - `quarry/` — main Python package (not at repo root)
 - `quarry.db` — SQLite database (commit to git; stores all state)
-- `tests/` — 25 pytest tests
+- `tests/` — 30 pytest tests (including seed functionality)
+- `constraints.txt` — pins torch to CPU-only build
+- `seed_data.yaml` — initial company seed data (29 companies)
+
+## Pre-Execution Checklist
+
+Before running any commands, verify:
+1. **Virtual env is active** — you should see `(quarry)` or similar in your prompt, or `which python` points to your venv
+2. **Dependencies installed** — `pip install -e ".[dev]" -c constraints.txt` (uses CPU-only torch; do NOT omit `-c constraints.txt` or you'll pull ~2GB of CUDA deps)
+3. **Database initialized** — `python -m quarry.store init` (creates `quarry.db` with schema)
+4. **Config file exists** — `config.yaml` must be present (copy from `config.yaml.example`)
+5. **Seed data loaded** — `python -m quarry.agent.tools seed` (loads companies from `seed_data.yaml`)
 
 ## Notes
 
-- Requirements are in `quarry/requirements.txt`, not repo root
+- Requirements in `pyproject.toml` with `constraints.txt` for CPU-only torch
 - Config via `config.yaml` (copy from `config.yaml.example`)
-- No pyproject.toml, linter, or formatter configured
+- Linter and formatter configured via pyproject.toml (ruff)
 - Uses raw sqlite3, not ORM
 - LLM via AWS Bedrock or OpenRouter (config.yaml)
 - Embeddings: sentence-transformers (default: all-MiniLM-L6-v2)
