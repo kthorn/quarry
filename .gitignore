@@ -73,3 +73,4 @@ venv.bak/
 quarry.db
 *.log
 config.yaml
+digest_*.txt

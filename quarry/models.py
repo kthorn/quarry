@@ -75,7 +75,7 @@ class CrawlRun(BaseModel):
     company_id: int | None = None
     started_at: datetime | None = None
     completed_at: datetime | None = None
-    status: Literal["success", "error", "partial"] | None = None
+    status: Literal["running", "success", "error", "partial"] | None = None
     postings_found: int = 0
     postings_new: int = 0
     error_message: str | None = None

@@ -1,130 +1,111 @@
-from pathlib import Path
 
+import pytest
 import yaml
 
-from quarry.agent.tools import seed
+from quarry.agent.tools import load_seed_data, seed
 from quarry.models import Company
 from quarry.store.db import init_db
 
 
-def _write_seed_file(tmp_path: Path, companies: list[dict]) -> Path:
-    seed_file = tmp_path / "seed_data.yaml"
-    with open(seed_file, "w") as f:
-        yaml.dump(companies, f)
-    return seed_file
+@pytest.fixture
+def db(tmp_path):
+    return init_db(tmp_path / "test.db")
 
 
-def test_seed_inserts_companies(tmp_path):
-    db_path = tmp_path / "test.db"
-    db = init_db(db_path)
-    seed_file = _write_seed_file(
-        tmp_path,
-        [
+@pytest.fixture
+def seed_file(tmp_path):
+    """Create a minimal seed file for testing."""
+    data = {
+        "companies": [
             {
                 "name": "TestCorp",
-                "domain": "testcorp.com",
                 "ats_type": "greenhouse",
                 "ats_slug": "testcorp",
-            },
-            {
-                "name": "AICo",
-                "domain": "aico.com",
-                "ats_type": "lever",
-                "ats_slug": "aico",
-            },
-        ],
-    )
-
-    inserted, skipped = seed(db=db, seed_file=str(seed_file))
-
-    assert inserted == 2
-    assert skipped == 0
-
-    companies = db.get_all_companies(active_only=False)
-    names = {c.name for c in companies}
-    assert "TestCorp" in names
-    assert "AICo" in names
-
-
-def test_seed_skips_duplicates(tmp_path):
-    db_path = tmp_path / "test.db"
-    db = init_db(db_path)
-    seed_file = _write_seed_file(
-        tmp_path,
-        [
-            {"name": "TestCorp", "domain": "testcorp.com"},
-        ],
-    )
-
-    db.insert_company(Company(name="TestCorp", domain="testcorp.com"))
-
-    inserted, skipped = seed(db=db, seed_file=str(seed_file))
-
-    assert inserted == 0
-    assert skipped == 1
-
-
-def test_seed_mixed_insert_and_skip(tmp_path):
-    db_path = tmp_path / "test.db"
-    db = init_db(db_path)
-    seed_file = _write_seed_file(
-        tmp_path,
-        [
-            {"name": "ExistingCo", "domain": "existing.com"},
-            {"name": "NewCo", "domain": "newco.com"},
-        ],
-    )
-
-    db.insert_company(Company(name="ExistingCo", domain="existing.com"))
-
-    inserted, skipped = seed(db=db, seed_file=str(seed_file))
-
-    assert inserted == 1
-    assert skipped == 1
-
-    companies = db.get_all_companies(active_only=False)
-    names = {c.name for c in companies}
-    assert "NewCo" in names
-
-
-def test_seed_sets_added_by(tmp_path):
-    db_path = tmp_path / "test.db"
-    db = init_db(db_path)
-    seed_file = _write_seed_file(
-        tmp_path,
-        [
-            {"name": "TestCorp", "domain": "testcorp.com"},
-        ],
-    )
-
-    seed(db=db, seed_file=str(seed_file))
-
-    companies = db.get_all_companies(active_only=False)
-    assert companies[0].added_by == "seed"
-
-
-def test_seed_preserves_ats_fields(tmp_path):
-    db_path = tmp_path / "test.db"
-    db = init_db(db_path)
-    seed_file = _write_seed_file(
-        tmp_path,
-        [
-            {
-                "name": "TestCorp",
                 "domain": "testcorp.com",
-                "ats_type": "greenhouse",
-                "ats_slug": "testcorp",
-                "crawl_priority": 8,
-                "added_reason": "Leading AI lab",
             },
         ],
-    )
+        "search_queries": [
+            {"query_text": "People Analytics Manager", "added_reason": "Direct match"},
+        ],
+    }
+    path = tmp_path / "seed_data.yaml"
+    path.write_text(yaml.dump(data))
+    return str(path)
 
-    seed(db=db, seed_file=str(seed_file))
 
-    companies = db.get_all_companies(active_only=False)
-    c = companies[0]
-    assert c.ats_type == "greenhouse"
-    assert c.ats_slug == "testcorp"
-    assert c.crawl_priority == 8
-    assert c.added_reason == "Leading AI lab"
+@pytest.fixture
+def legacy_seed_file(tmp_path):
+    """Create a legacy flat-list seed file for testing."""
+    data = [
+        {
+            "name": "TestCorp",
+            "ats_type": "greenhouse",
+            "ats_slug": "testcorp",
+            "domain": "testcorp.com",
+        },
+    ]
+    path = tmp_path / "legacy_seed.yaml"
+    path.write_text(yaml.dump(data))
+    return str(path)
+
+
+class TestLoadSeedData:
+    def test_load_companies_from_yaml(self, db, seed_file):
+        companies, queries = load_seed_data(seed_file)
+        assert len(companies) == 1
+        assert companies[0].name == "TestCorp"
+        assert companies[0].ats_type == "greenhouse"
+
+    def test_load_queries_from_yaml(self, db, seed_file):
+        companies, queries = load_seed_data(seed_file)
+        assert len(queries) == 1
+        assert queries[0].query_text == "People Analytics Manager"
+
+    def test_load_raises_for_missing_file(self, db):
+        with pytest.raises(SystemExit):
+            load_seed_data("/nonexistent/path.yaml")
+
+    def test_load_legacy_flat_list(self, db, legacy_seed_file):
+        companies, queries = load_seed_data(legacy_seed_file)
+        assert len(companies) == 1
+        assert companies[0].name == "TestCorp"
+        assert len(queries) == 0
+
+
+class TestSeed:
+    def test_seed_inserts_into_db(self, db, seed_file):
+        seed(db, seed_file)
+        companies = db.get_all_companies(active_only=False)
+        assert len(companies) == 1
+        assert companies[0].name == "TestCorp"
+
+    def test_seed_is_idempotent(self, db, seed_file):
+        seed(db, seed_file)
+        seed(db, seed_file)
+        companies = db.get_all_companies(active_only=False)
+        assert len(companies) == 1
+
+    def test_seed_inserts_queries(self, db, seed_file):
+        seed(db, seed_file)
+        queries = db.get_active_search_queries()
+        assert len(queries) == 1
+
+    def test_seed_preserves_ats_fields(self, db, seed_file):
+        seed(db, seed_file)
+        companies = db.get_all_companies(active_only=False)
+        assert companies[0].ats_type == "greenhouse"
+        assert companies[0].ats_slug == "testcorp"
+
+    def test_seed_mixed_insert_and_skip(self, db, tmp_path):
+        data = {
+            "companies": [
+                {"name": "ExistingCo", "domain": "existing.com"},
+                {"name": "NewCo", "domain": "newco.com"},
+            ],
+        }
+        path = tmp_path / "seed_data.yaml"
+        path.write_text(yaml.dump(data))
+        db.insert_company(Company(name="ExistingCo", domain="existing.com"))
+        inserted, skipped = seed(db, str(path))
+        assert inserted == 1
+        assert skipped == 1

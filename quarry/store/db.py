@@ -149,6 +149,16 @@ class Database:
         rows = self.execute(sql, (url,))
         return len(rows) > 0
 
+    def update_posting_embedding(self, posting_id: int, embedding: bytes) -> None:
+        """Store the embedding vector for a posting."""
+        sql = "UPDATE job_postings SET embedding = ? WHERE id = ?"
+        self.execute(sql, (embedding, posting_id))
+
+    def update_posting_similarity(self, posting_id: int, score: float) -> None:
+        """Store the similarity score for a posting."""
+        sql = "UPDATE job_postings SET similarity_score = ? WHERE id = ?"
+        self.execute(sql, (score, posting_id))
+
     def get_postings(
         self, status: str | None = None, limit: int = 100
     ) -> list[models.JobPosting]:
@@ -244,6 +254,52 @@ class Database:
                 ),
             )
             return cursor.lastrowid or 0
+
+    def get_recent_postings(
+        self, limit: int = 100, status: str = "new"
+    ) -> list[models.JobPosting]:
+        """Get recent postings ordered by similarity_score descending.
+
+        Args:
+            limit: Maximum number of postings to return.
+            status: Filter by posting status.
+
+        Returns:
+            List of JobPosting objects sorted by similarity_score descending.
+        """
+        sql = """
+            SELECT * FROM job_postings
+            WHERE status = ?
+            ORDER BY similarity_score DESC
+            LIMIT ?
+        """
+        rows = self.execute(sql, (status, limit))
+        return [models.JobPosting(**dict(row)) for row in rows]
+
+    def mark_postings_seen(self, posting_ids: list[int]) -> None:
+        """Mark postings as seen (included in digest).
+
+        Args:
+            posting_ids: List of posting IDs to mark as seen.
+        """
+        if not posting_ids:
+            return
+        placeholders = ",".join("?" * len(posting_ids))
+        sql = f"UPDATE job_postings SET status = 'seen' WHERE id IN ({placeholders})"
+        self.execute(sql, tuple(posting_ids))
+
+    def get_company_name(self, company_id: int) -> str | None:
+        """Get company name by ID.
+
+        Args:
+            company_id: Company ID to look up.
+
+        Returns:
+            Company name or None if not found.
+        """
+        sql = "SELECT name FROM companies WHERE id = ?"
+        rows = self.execute(sql, (company_id,))
+        return rows[0]["name"] if rows else None
 
     def get_setting(self, key: str) -> str | None:
         sql = "SELECT value FROM settings WHERE key = ?"
