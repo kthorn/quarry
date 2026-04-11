@@ -9,6 +9,8 @@ CREATE TABLE IF NOT EXISTS companies (
     careers_url     TEXT,
     ats_type        TEXT DEFAULT 'unknown',
     ats_slug        TEXT,
+    resolve_status  TEXT DEFAULT 'unresolved',
+    resolve_attempts INTEGER DEFAULT 0,
     active          BOOLEAN DEFAULT TRUE,
     crawl_priority  INTEGER DEFAULT 5,
     notes           TEXT,

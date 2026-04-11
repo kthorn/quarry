@@ -5,6 +5,7 @@ from typing import Any
 import httpx
 
 from quarry.crawlers.base import BaseCrawler, Crawl404Error
+from quarry.http import get_client
 from quarry.models import Company, RawPosting
 
 logger = logging.getLogger(__name__)
@@ -22,20 +23,20 @@ class LeverCrawler(BaseCrawler):
             return []
 
         url = f"{self.BASE_URL}/{company.ats_slug}?mode=json"
+        client = get_client()
 
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            try:
-                response = await client.get(url)
-                response.raise_for_status()
-                jobs = response.json()
-            except httpx.HTTPStatusError as e:
-                if e.response.status_code == 404:
-                    raise Crawl404Error(company.name, url) from e
-                logger.error(f"HTTP error fetching {company.name}: {e}")
-                return []
-            except httpx.RequestError as e:
-                logger.error(f"Request error fetching {company.name}: {e}")
-                return []
+        try:
+            response = await client.get(url)
+            response.raise_for_status()
+            jobs = response.json()
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                raise Crawl404Error(company.name, url) from e
+            logger.error(f"HTTP error fetching {company.name}: {e}")
+            return []
+        except httpx.RequestError as e:
+            logger.error(f"Request error fetching {company.name}: {e}")
+            return []
 
         return self._parse_jobs(jobs, company.id or 0)
 

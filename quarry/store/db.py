@@ -38,8 +38,9 @@ class Database:
     def insert_company(self, company: models.Company) -> int:
         sql = """
             INSERT INTO companies (name, domain, careers_url, ats_type, ats_slug,
+                resolve_status, resolve_attempts,
                 active, crawl_priority, notes, added_by, added_reason)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         with self.get_connection() as conn:
             cursor = conn.execute(
@@ -50,6 +51,8 @@ class Database:
                     company.careers_url,
                     company.ats_type,
                     company.ats_slug,
+                    company.resolve_status,
+                    company.resolve_attempts,
                     company.active,
                     company.crawl_priority,
                     company.notes,
@@ -73,10 +76,42 @@ class Database:
         rows = self.execute(sql)
         return [models.Company(**dict(row)) for row in rows]
 
+    def get_company_by_name(self, name: str) -> models.Company | None:
+        sql = "SELECT * FROM companies WHERE name = ?"
+        rows = self.execute(sql, (name,))
+        if rows:
+            return models.Company(**dict(rows[0]))
+        return None
+
+    def get_companies_by_resolve_status(self, status: str) -> list[models.Company]:
+        sql = "SELECT * FROM companies WHERE resolve_status = ?"
+        rows = self.execute(sql, (status,))
+        return [models.Company(**dict(row)) for row in rows]
+
+    def migrate_resolve_columns(self) -> None:
+        with self.get_connection() as conn:
+            existing = {
+                row[1]
+                for row in conn.execute("PRAGMA table_info(companies)").fetchall()
+            }
+            if "resolve_status" not in existing:
+                conn.execute(
+                    "ALTER TABLE companies ADD COLUMN resolve_status TEXT DEFAULT 'unresolved'"
+                )
+            if "resolve_attempts" not in existing:
+                conn.execute(
+                    "ALTER TABLE companies ADD COLUMN resolve_attempts INTEGER DEFAULT 0"
+                )
+            conn.execute(
+                "UPDATE companies SET resolve_status = 'resolved' "
+                "WHERE domain IS NOT NULL AND careers_url IS NOT NULL AND ats_type != 'unknown'"
+            )
+
     def update_company(self, company: models.Company) -> None:
         sql = """
             UPDATE companies SET name=?, domain=?, careers_url=?, ats_type=?,
-                ats_slug=?, active=?, crawl_priority=?, notes=?, updated_at=CURRENT_TIMESTAMP
+                ats_slug=?, resolve_status=?, resolve_attempts=?,
+                active=?, crawl_priority=?, notes=?, updated_at=CURRENT_TIMESTAMP
             WHERE id=?
         """
         self.execute(
@@ -87,6 +122,8 @@ class Database:
                 company.careers_url,
                 company.ats_type,
                 company.ats_slug,
+                company.resolve_status,
+                company.resolve_attempts,
                 company.active,
                 company.crawl_priority,
                 company.notes,
@@ -322,6 +359,8 @@ def init_db(db_path: str | Path) -> Database:
 
     with db.get_connection() as conn:
         conn.executescript(SCHEMA_SQL)
+
+    db.migrate_resolve_columns()
 
     return db
 

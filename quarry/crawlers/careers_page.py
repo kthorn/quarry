@@ -9,6 +9,7 @@ import httpx
 from bs4 import BeautifulSoup
 
 from quarry.crawlers.base import BaseCrawler, Crawl404Error
+from quarry.http import get_client
 from quarry.models import Company, RawPosting
 
 logger = logging.getLogger(__name__)
@@ -91,22 +92,18 @@ class CareersPageCrawler(BaseCrawler):
         sanitized_url = url.split("?")[0].rstrip("/")
 
         try:
-            async with httpx.AsyncClient(
-                timeout=10.0,
-                follow_redirects=True,
-                limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
-            ) as client:
-                async with client.stream("GET", url) as response:
-                    response.raise_for_status()
+            client = get_client()
+            async with client.stream("GET", url) as response:
+                response.raise_for_status()
 
-                    chunks = []
-                    async for chunk in response.aiter_bytes():
-                        chunks.append(chunk)
-                        if sum(len(c) for c in chunks) > self.max_response_bytes:
-                            logger.warning(f"Response too large for {sanitized_url}")
-                            return []
+                chunks = []
+                async for chunk in response.aiter_bytes():
+                    chunks.append(chunk)
+                    if sum(len(c) for c in chunks) > self.max_response_bytes:
+                        logger.warning(f"Response too large for {sanitized_url}")
+                        return []
 
-                    html = b"".join(chunks).decode("utf-8", errors="ignore")
+                html = b"".join(chunks).decode("utf-8", errors="ignore")
 
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:

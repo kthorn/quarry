@@ -11,6 +11,8 @@ class Company(BaseModel):
     careers_url: str | None = None
     ats_type: Literal["greenhouse", "lever", "ashby", "generic", "unknown"] = "unknown"
     ats_slug: str | None = None
+    resolve_status: Literal["unresolved", "resolved", "failed"] = "unresolved"
+    resolve_attempts: int = 0
     active: bool = True
     crawl_priority: int = 5
     notes: str | None = None
