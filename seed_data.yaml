@@ -1,9 +1,9 @@
 companies:
   - name: OpenAI
     domain: openai.com
-    careers_url: https://openai.com/careers/search
-    ats_type: generic
-    ats_slug: null
+    careers_url: https://jobs.ashbyhq.com/openai
+    ats_type: ashby
+    ats_slug: openai
     crawl_priority: 8
     added_reason: Leading AI lab, GPT/Codex
 
@@ -25,9 +25,9 @@ companies:
 
   - name: DeepMind
     domain: deepmind.google
-    careers_url: https://www.deepmind.com/careers
-    ats_type: generic
-    ats_slug: null
+    careers_url: https://job-boards.greenhouse.io/deepmind
+    ats_type: greenhouse
+    ats_slug: deepmind
     crawl_priority: 7
     added_reason: Leading AI research lab
 

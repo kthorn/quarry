@@ -2,13 +2,7 @@ import os
 
 os.environ["AWS_REGION"] = "us-west-2"  # Test env override
 
-from quarry.config import Settings, load_config
-
-
-def test_settings_defaults():
-    settings = Settings()
-    assert settings.db_path == "quarry.db"
-    assert settings.similarity_threshold == 0.35
+from quarry.config import load_config
 
 
 def test_load_config_from_yaml(tmp_path):

@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from quarry.models import (
-    FilterResult,
+    FilterDecision,
     JobPosting,
     ParsedLocation,
     ParseResult,
@@ -165,10 +165,9 @@ class TestFilterPosting:
             mock_embed.return_value = ideal_emb
             result = filter_posting(raw, ideal_emb, threshold=0.3, blocklist=[])
 
-        assert isinstance(result, FilterResult)
+        assert isinstance(result, FilterDecision)
         assert result.passed is True
         assert result.skip_reason is None
-        assert result.similarity_score is not None
 
     def test_blocks_low_similarity(self):
         from unittest.mock import patch
@@ -214,26 +213,6 @@ class TestFilterPosting:
 
         assert result.passed is False
         assert result.skip_reason == "blocklist"
-
-    def test_returns_similarity_score_even_on_block(self):
-        from unittest.mock import patch
-
-        raw = RawPosting(
-            company_id=1,
-            title="Staffing Agency Role",
-            url="https://example.com/4",
-            source_type="greenhouse",
-        )
-        ideal_emb = np.ones(384, dtype=np.float32)
-        ideal_emb = ideal_emb / np.linalg.norm(ideal_emb)
-
-        with patch("quarry.pipeline.filter.embed_posting") as mock_embed:
-            mock_embed.return_value = ideal_emb.copy()
-            result = filter_posting(
-                raw, ideal_emb, threshold=0.3, blocklist=["staffing agency"]
-            )
-
-        assert result.similarity_score is not None
 
 
 class TestApplyLocationFilter:

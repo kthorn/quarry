@@ -10,7 +10,6 @@ from quarry.pipeline.embedder import (
 from quarry.pipeline.extract import extract
 from quarry.pipeline.filter import (
     apply_keyword_blocklist,
-    filter_posting,
     score_similarity,
 )
 from quarry.pipeline.locations import parse_location
@@ -24,6 +23,5 @@ __all__ = [
     "extract",
     "parse_location",
     "apply_keyword_blocklist",
-    "filter_posting",
     "score_similarity",
 ]

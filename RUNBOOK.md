@@ -69,13 +69,10 @@ Existing companies are skipped by name.
 
 ```bash
 # Single search cycle
-python -m quarry.agent.agent --run-once
+python -m quarry.agent run-once
 
 # Continuous scheduler
 python -m quarry.agent.scheduler
-
-# Labeling UI
-python -m quarry.ui.app
 ```
 
 ## Company Resolution
@@ -115,6 +112,48 @@ python -m quarry.store add-company --name "Acme Inc" --careers-url "https://boar
 2. **Careers URL resolution** — if `careers_url` is empty, probes `/careers`, `/jobs`, etc. on the domain
 3. **ATS detection** — if `ats_type` is `unknown`, checks URL patterns (Greenhouse, Lever, Ashby) then HTML signatures; falls back to `generic`
 4. Companies that fail 3 resolve attempts are marked `failed`; use `--retry-failed` to reset them
+
+## Generating Reports
+
+### Digest (ranked job postings)
+
+After running `python -m quarry.agent run-once`, generate a plain-text digest of the top new postings sorted by similarity score:
+
+```bash
+# Build digest (default: top 20 from config digest_top_n)
+python -m quarry.digest
+
+# Limit to top 10
+python -m quarry.digest --limit 10
+
+# Custom output file
+python -m quarry.digest -o my_digest.txt
+
+# Build digest and mark postings as seen (so they won't appear in future digests)
+python -m quarry.digest --mark-seen
+```
+
+Output format:
+```
+=== Quarry Digest - 2026-04-11 16:00 UTC ===
+3 new posting(s)
+
+1. Senior Engineer at OpenAI [Remote] (score: 0.872)
+   San Francisco, CA
+   https://openai.com/careers/12345
+```
+
+### Crawl log (detailed CSV)
+
+Each `run-once` writes a CSV with every posting found, its status, and similarity score:
+
+```
+title,source,url,location,similarity_score,status
+Senior Engineer,OpenAI,https://...,San Francisco,0.872,new
+...
+```
+
+The file is named `crawl_log_YYYYMMDD_HHMM.csv` and written to the working directory.
 
 ## Testing & Linting
 

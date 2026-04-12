@@ -30,7 +30,8 @@ pre-commit install
 
 - `quarry/` — main Python package (not at repo root)
 - `quarry.db` — SQLite database (commit to git; stores all state)
-- `tests/` — 30 pytest tests (including seed functionality)
+- `docs/STATUS.md` — **always keep updated** as work is done; reflects current milestone progress and next steps
+- `tests/` — 198 pytest tests (including seed functionality)
 - `constraints.txt` — pins torch to CPU-only build
 - `seed_data.yaml` — initial company seed data (29 companies)
 
@@ -51,3 +52,12 @@ Before running any commands, verify:
 - Uses raw sqlite3, not ORM
 - LLM via AWS Bedrock or OpenRouter (config.yaml)
 - Embeddings: sentence-transformers (default: all-MiniLM-L6-v2)
+
+## Important: Keep STATUS.md Updated
+
+After completing any milestone, feature, or significant change, **update `docs/STATUS.md`** to reflect the current state. This includes:
+- Marking completed milestones as DONE
+- Updating test counts
+- Adding new completed plans or additional work
+- Updating next steps
+- Updating verification commands if they change

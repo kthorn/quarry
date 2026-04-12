@@ -48,20 +48,17 @@ class TestEndToEndPipeline:
 
         result = filter_posting(raw, ideal_emb, threshold=0.3, blocklist=[])
         assert result.passed is True
-        assert result.similarity_score is not None
-        assert result.similarity_score > 0.3
+        assert result.skip_reason is None
 
-        posting.similarity_score = result.similarity_score
+        posting.similarity_score = 0.5
 
         posting_id = db.insert_posting(posting)
         assert posting_id > 0
 
-        db.update_posting_similarity(posting_id, result.similarity_score)
-
         fetched_postings = db.get_postings(status="new")
         assert len(fetched_postings) >= 1
         fetched = fetched_postings[0]
-        assert fetched.similarity_score == result.similarity_score
+        assert fetched.similarity_score == 0.5
 
     def test_blocklisted_posting_rejected(self, db, seed_company):
         ideal_emb = np.ones(384, dtype=np.float32)

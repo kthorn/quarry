@@ -27,7 +27,7 @@ from quarry.pipeline.extract import extract
 from quarry.pipeline.filter import (
     apply_keyword_blocklist,
     apply_location_filter,
-    filter_posting,
+    score_similarity,
 )
 from quarry.store.db import Database
 
@@ -150,15 +150,11 @@ def _process_posting(
     if ideal_embedding is None:
         similarity = 0.0
     else:
-        result = filter_posting(raw, ideal_embedding, blocklist=blocklist)
-        similarity = result.similarity_score or 0.0
-        if not result.passed:
-            return (
-                None,
-                result.skip_reason or "filtered",
-                round(similarity, 4),
-                parse_result,
-            )
+        similarity = score_similarity(embed_posting(raw), ideal_embedding)
+        if not apply_keyword_blocklist(raw, blocklist):
+            return None, "blocklist", round(similarity, 4), parse_result
+        if similarity < settings.similarity_threshold:
+            return None, "low_similarity", round(similarity, 4), parse_result
 
     posting.similarity_score = similarity
     if ideal_embedding is not None:

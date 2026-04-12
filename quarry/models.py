@@ -23,7 +23,7 @@ class ParsedLocation:
 @dataclass
 class ParseResult:
     work_model: str | None = None
-    locations: list = field(default_factory=list)
+    locations: list[ParsedLocation] = field(default_factory=list)
 
 
 class Company(BaseModel):
@@ -141,14 +141,10 @@ class AgentAction(BaseModel):
     created_at: datetime | None = None
 
 
-class FilterResult(BaseModel):
-    posting: RawPosting
+@dataclass
+class FilterDecision:
     passed: bool
-    skip_reason: (
-        Literal["duplicate", "duplicate_url", "blocklist", "low_similarity", "location"]
-        | None
-    ) = None
-    similarity_score: float | None = None
+    skip_reason: str | None = None
 
 
 class EnrichedPosting(BaseModel):

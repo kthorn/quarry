@@ -1,7 +1,7 @@
 """Tests for location data models."""
 
 from quarry.models import (
-    FilterResult,
+    FilterDecision,
     JobPosting,
     ParsedLocation,
     ParseResult,
@@ -91,7 +91,13 @@ def test_raw_posting_no_remote():
     assert not hasattr(r, "remote")
 
 
-def test_filter_result_has_location_skip_reason():
-    r = RawPosting(company_id=1, title="E", url="https://example.com", source_type="g")
-    fr = FilterResult(posting=r, passed=False, skip_reason="location")
-    assert fr.skip_reason == "location"
+def test_filter_decision_passed():
+    d = FilterDecision(passed=True)
+    assert d.passed is True
+    assert d.skip_reason is None
+
+
+def test_filter_decision_rejected():
+    d = FilterDecision(passed=False, skip_reason="blocklist")
+    assert d.passed is False
+    assert d.skip_reason == "blocklist"

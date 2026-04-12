@@ -8,7 +8,7 @@ import logging
 
 import numpy as np
 
-from quarry.models import FilterResult, JobPosting, ParseResult, RawPosting
+from quarry.models import FilterDecision, JobPosting, ParseResult, RawPosting
 from quarry.pipeline.embedder import embed_posting
 
 log = logging.getLogger(__name__)
@@ -80,7 +80,7 @@ def filter_posting(
     ideal_embedding: np.ndarray,
     threshold: float | None = None,
     blocklist: list[str] | None = None,
-) -> FilterResult:
+) -> FilterDecision:
     """Filter a single posting through similarity scoring and blocklist.
 
     Pipeline: embed posting → score similarity → check blocklist → return result.
@@ -96,7 +96,7 @@ def filter_posting(
         blocklist: Keyword phrases that cause rejection.
 
     Returns:
-        FilterResult with pass/fail status, skip reason, and similarity score.
+        FilterDecision with pass/fail status and skip reason.
     """
     if threshold is None:
         from quarry.config import settings
@@ -108,27 +108,12 @@ def filter_posting(
     similarity = score_similarity(posting_embedding, ideal_embedding)
 
     if not apply_keyword_blocklist(posting, blocklist):
-        return FilterResult(
-            posting=posting,
-            passed=False,
-            skip_reason="blocklist",
-            similarity_score=round(similarity, 4),
-        )
+        return FilterDecision(passed=False, skip_reason="blocklist")
 
     if similarity < threshold:
-        return FilterResult(
-            posting=posting,
-            passed=False,
-            skip_reason="low_similarity",
-            similarity_score=round(similarity, 4),
-        )
+        return FilterDecision(passed=False, skip_reason="low_similarity")
 
-    return FilterResult(
-        posting=posting,
-        passed=True,
-        skip_reason=None,
-        similarity_score=round(similarity, 4),
-    )
+    return FilterDecision(passed=True)
 
 
 def apply_location_filter(
