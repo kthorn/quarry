@@ -3,6 +3,7 @@
 Usage:
     python -m quarry.agent run-once
     python -m quarry.agent seed
+    python -m quarry.agent recompute-similarity
 """
 
 import click
@@ -51,6 +52,18 @@ def seed():
     db = get_db()
     do_seed(db)
     click.echo("Seed data loaded.")
+
+
+@cli.command(name="recompute-similarity")
+def recompute_similarity():
+    """Recompute all similarity scores against the current ideal role embedding."""
+    _configure_logging()
+
+    from quarry.agent.tools import recompute_similarity as do_recompute
+
+    db = get_db()
+    do_recompute(db)
+    click.echo("Done.")
 
 
 if __name__ == "__main__":

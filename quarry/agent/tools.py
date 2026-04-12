@@ -193,5 +193,54 @@ def normalize_locations_command(dry_run: bool):
         click.echo("(dry run — no changes made)")
 
 
+@cli.command(name="recompute-similarity")
+def recompute_similarity_command():
+    """Recompute all similarity scores against the current ideal role embedding."""
+    db = init_db(settings.db_path)
+    recompute_similarity(db)
+    click.echo("Similarity recomputation complete.")
+
+
+def recompute_similarity(db: Database | None = None) -> None:
+    """Recompute all similarity scores against the current ideal role embedding."""
+    from quarry.pipeline.embedder import (
+        deserialize_embedding,
+        get_ideal_embedding,
+    )
+    from quarry.pipeline.filter import cosine_similarity
+
+    if db is None:
+        db = Database(settings.db_path)
+
+    from quarry.agent.scheduler import _ensure_ideal_embedding
+
+    _ensure_ideal_embedding(db)
+    ideal_embedding = get_ideal_embedding(db)
+    if ideal_embedding is None:
+        print("No ideal role embedding found. Set ideal_role_description in config.")
+        return
+
+    postings = db.get_all_postings_with_embeddings()
+    if not postings:
+        print("No postings with embeddings found.")
+        return
+
+    updates = []
+    skipped = 0
+    for p in postings:
+        if p.embedding is None:
+            skipped += 1
+            continue
+        emb = deserialize_embedding(p.embedding)
+        score = cosine_similarity(emb, ideal_embedding)
+        updates.append((p.id, round(score, 4)))
+
+    db.update_posting_similarities(updates)
+    print(
+        f"Updated {len(updates)} posting similarity scores. "
+        f"Skipped {skipped} postings with no embedding."
+    )
+
+
 if __name__ == "__main__":
     cli()
