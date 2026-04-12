@@ -1,8 +1,14 @@
 from unittest.mock import patch
 
+import numpy as np
 import pytest
 
-from quarry.agent.scheduler import run_once
+from quarry.agent.scheduler import _process_posting, run_once
+from quarry.config import (
+    CompanyFilterConfig,
+    FiltersConfig,
+    KeywordBlocklistConfig,
+)
 from quarry.models import Company, RawPosting
 from quarry.pipeline.embedder import set_ideal_embedding
 from quarry.store.db import init_db
@@ -88,3 +94,77 @@ class TestRunOnce:
 
             runs = seeded_db.execute("SELECT * FROM crawl_runs")
             assert len(runs) >= 1
+
+
+class TestProcessPosting:
+    def test_process_posting_new_job_stored(self, db, seeded_db):
+        """Posting passes all filters -> status='new', similarity computed"""
+        raw = RawPosting(
+            company_id=1,
+            title="Senior Data Analyst",
+            url="https://example.com/job/1",
+            description="Analyze people data and build dashboards",
+            location="Remote, US",
+            source_type="greenhouse",
+        )
+        ideal_embedding = np.random.rand(384).astype(np.float32)
+        ideal_embedding = ideal_embedding / np.linalg.norm(ideal_embedding)
+
+        posting, status, similarity, parse_result = _process_posting(
+            raw, db, "TestCorp", None, ideal_embedding
+        )
+        assert status == "new"
+        assert posting is not None
+        assert similarity >= -1.0
+
+    def test_process_posting_blocklist_rejected(self, db):
+        """Keyword blocklist rejects -> status='blocklist'"""
+        config = FiltersConfig(
+            keyword_blocklist=KeywordBlocklistConfig(keywords=["engineer"])
+        )
+        raw = RawPosting(
+            company_id=1,
+            title="Senior Engineer",
+            url="https://example.com/job/2",
+            source_type="test",
+        )
+        ideal_embedding = np.ones(384, dtype=np.float32)
+        ideal_embedding = ideal_embedding / np.linalg.norm(ideal_embedding)
+        posting, status, similarity, parse_result = _process_posting(
+            raw, db, "Acme Corp", config, ideal_embedding
+        )
+        assert status == "blocklist"
+        assert posting is None
+
+    def test_process_posting_company_deny(self, db):
+        """Company deny list rejects -> status='company_deny'"""
+        config = FiltersConfig(company_filter=CompanyFilterConfig(deny=["Talentify"]))
+        raw = RawPosting(
+            company_id=1,
+            title="Recruiter",
+            url="https://example.com/job/3",
+            source_type="test",
+        )
+        ideal_embedding = np.ones(384, dtype=np.float32)
+        ideal_embedding = ideal_embedding / np.linalg.norm(ideal_embedding)
+        posting, status, similarity, parse_result = _process_posting(
+            raw, db, "Talentify", config, ideal_embedding
+        )
+        assert status == "company_deny"
+
+    def test_process_posting_duplicate(self, db, seeded_db):
+        """Duplicate posting -> status='duplicate'"""
+        raw = _make_raw_posting(company_id=1)
+        ideal_embedding = np.ones(384, dtype=np.float32)
+        ideal_embedding = ideal_embedding / np.linalg.norm(ideal_embedding)
+
+        posting, status, sim, pr = _process_posting(
+            raw, db, "TestCorp", None, ideal_embedding
+        )
+        assert status == "new"
+        db.insert_posting(posting)
+
+        posting2, status2, sim2, pr2 = _process_posting(
+            raw, db, "TestCorp", None, ideal_embedding
+        )
+        assert status2 == "duplicate"

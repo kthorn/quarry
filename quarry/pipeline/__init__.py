@@ -9,7 +9,10 @@ from quarry.pipeline.embedder import (
 )
 from quarry.pipeline.extract import extract
 from quarry.pipeline.filter import (
-    apply_keyword_blocklist,
+    FILTER_STEPS,
+    CompanyFilter,
+    KeywordBlocklistFilter,
+    LocationFilter,
     score_similarity,
 )
 from quarry.pipeline.locations import parse_location
@@ -22,6 +25,9 @@ __all__ = [
     "set_ideal_embedding",
     "extract",
     "parse_location",
-    "apply_keyword_blocklist",
+    "FILTER_STEPS",
+    "CompanyFilter",
+    "KeywordBlocklistFilter",
+    "LocationFilter",
     "score_similarity",
 ]

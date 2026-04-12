@@ -1,20 +1,25 @@
-"""Tests for similarity filter and keyword blocklist."""
+"""Tests for similarity scoring and filter pipeline."""
 
 import numpy as np
 import pytest
 
+from quarry.config import (
+    CompanyFilterConfig,
+    KeywordBlocklistConfig,
+    LocationFilterConfig,
+)
 from quarry.models import (
-    FilterDecision,
     JobPosting,
     ParsedLocation,
     ParseResult,
     RawPosting,
 )
 from quarry.pipeline.filter import (
-    apply_keyword_blocklist,
-    apply_location_filter,
+    FILTER_STEPS,
+    CompanyFilter,
+    KeywordBlocklistFilter,
+    LocationFilter,
     cosine_similarity,
-    filter_posting,
     score_similarity,
 )
 
@@ -72,209 +77,204 @@ class TestScoreSimilarity:
         assert score_similarity(v, v) == pytest.approx(1.0, abs=1e-5)
 
 
-class TestApplyKeywordBlocklist:
-    def test_blocklisted_keyword_in_title(self):
-        posting = RawPosting(
-            company_id=1,
-            title="Staffing Agency Recruiter",
-            url="https://example.com/1",
-            source_type="greenhouse",
+def _make_raw_posting(**kwargs):
+    defaults = dict(
+        company_id=1,
+        title="Software Engineer",
+        url="http://example.com",
+        source_type="test",
+    )
+    defaults.update(kwargs)
+    return RawPosting(**defaults)
+
+
+def _make_posting(**kwargs):
+    defaults = dict(
+        company_id=1,
+        title="Software Engineer",
+        title_hash="hash1",
+        url="http://example.com",
+        source_type="test",
+    )
+    defaults.update(kwargs)
+    return JobPosting(**defaults)
+
+
+def _make_parse_result(**kwargs):
+    defaults = dict(work_model=None, locations=[])
+    defaults.update(kwargs)
+    return ParseResult(**defaults)
+
+
+_nyc_loc = ParsedLocation(
+    canonical_name="New York, NY",
+    city="New York",
+    state_code="NY",
+    country_code="US",
+    region="US-East",
+)
+
+_nyc_result = ParseResult(work_model=None, locations=[_nyc_loc])
+
+
+class TestKeywordBlocklistFilter:
+    def test_empty_keywords_passes(self):
+        filt = KeywordBlocklistFilter()
+        config = KeywordBlocklistConfig()
+        raw = _make_raw_posting(title="Senior Eng")
+        posting = _make_posting()
+        parse_result = _make_parse_result()
+        decision = filt.check(raw, posting, parse_result, "Acme Corp", config)
+        assert decision.passed is True
+
+    def test_keyword_match_blocks(self):
+        config = KeywordBlocklistConfig(keywords=["staffing agency"])
+        filt = KeywordBlocklistFilter()
+        raw = _make_raw_posting(title="Staffing Agency Recruiter")
+        posting = _make_posting()
+        parse_result = _make_parse_result()
+        decision = filt.check(raw, posting, parse_result, "Acme Corp", config)
+        assert decision.passed is False
+        assert decision.skip_reason == "blocklist"
+
+    def test_passlist_overrides_blocklist(self):
+        config = KeywordBlocklistConfig(
+            keywords=["senior"], passlist=["senior product"]
         )
-        blocklist = ["staffing agency"]
-        assert apply_keyword_blocklist(posting, blocklist) is False
+        filt = KeywordBlocklistFilter()
+        raw = _make_raw_posting(title="Senior Product Manager")
+        posting = _make_posting()
+        parse_result = _make_parse_result()
+        decision = filt.check(raw, posting, parse_result, "Acme Corp", config)
+        assert decision.passed is True
 
-    def test_blocklisted_keyword_in_description(self):
-        posting = RawPosting(
-            company_id=1,
-            title="Engineer",
-            url="https://example.com/2",
-            description="This role requires clearance",
-            source_type="greenhouse",
-        )
-        blocklist = ["requires clearance"]
-        assert apply_keyword_blocklist(posting, blocklist) is False
+    def test_passlist_no_match_still_blocked(self):
+        config = KeywordBlocklistConfig(keywords=["senior"], passlist=["principal"])
+        filt = KeywordBlocklistFilter()
+        raw = _make_raw_posting(title="Senior Engineer")
+        posting = _make_posting()
+        parse_result = _make_parse_result()
+        decision = filt.check(raw, posting, parse_result, "Acme Corp", config)
+        assert decision.passed is False
+        assert decision.skip_reason == "blocklist"
 
-    def test_no_blocklist_match(self):
-        posting = RawPosting(
-            company_id=1,
-            title="Senior Engineer",
-            url="https://example.com/3",
-            description="Build great products",
-            source_type="greenhouse",
-        )
-        blocklist = ["staffing agency", "relocation required"]
-        assert apply_keyword_blocklist(posting, blocklist) is True
+    def test_case_insensitive(self):
+        config = KeywordBlocklistConfig(keywords=["STAFFING AGENCY"])
+        filt = KeywordBlocklistFilter()
+        raw = _make_raw_posting(title="staffing agency recruiter")
+        posting = _make_posting()
+        parse_result = _make_parse_result()
+        decision = filt.check(raw, posting, parse_result, "Acme Corp", config)
+        assert decision.passed is False
 
-    def test_case_insensitive_match(self):
-        posting = RawPosting(
-            company_id=1,
-            title="STAFFING AGENCY recruiter",
-            url="https://example.com/4",
-            source_type="lever",
-        )
-        blocklist = ["staffing agency"]
-        assert apply_keyword_blocklist(posting, blocklist) is False
-
-    def test_empty_blocklist_passes(self):
-        posting = RawPosting(
-            company_id=1,
-            title="Anything goes",
-            url="https://example.com/5",
-            source_type="greenhouse",
-        )
-        assert apply_keyword_blocklist(posting, []) is True
-
-    def test_partial_match_is_not_blocked(self):
-        posting = RawPosting(
-            company_id=1,
-            title="Remote staffing coordinator",
-            url="https://example.com/6",
-            description="Internal team, not an agency",
-            source_type="greenhouse",
-        )
-        blocklist = ["staffing agency"]
-        assert apply_keyword_blocklist(posting, blocklist) is True
-
-    def test_blocklisted_in_location(self):
-        posting = RawPosting(
-            company_id=1,
-            title="Engineer",
-            url="https://example.com/7",
-            location="Relocation required - San Francisco",
-            source_type="greenhouse",
-        )
-        blocklist = ["relocation required"]
-        assert apply_keyword_blocklist(posting, blocklist) is False
+    def test_none_config_passes(self):
+        filt = KeywordBlocklistFilter()
+        config = filt.get_config(None)
+        assert config.keywords == []
 
 
-class TestFilterPosting:
-    def test_passes_relevant_posting(self):
-        from unittest.mock import patch
+class TestCompanyFilter:
+    def test_empty_allow_and_deny_passes(self):
+        config = CompanyFilterConfig()
+        filt = CompanyFilter()
+        raw = _make_raw_posting()
+        posting = _make_posting()
+        parse_result = _make_parse_result()
+        decision = filt.check(raw, posting, parse_result, "Acme Corp", config)
+        assert decision.passed is True
 
-        raw = RawPosting(
-            company_id=1,
-            title="Senior People Analytics Manager",
-            url="https://example.com/1",
-            description="Lead analytics team",
-            source_type="greenhouse",
-        )
-        ideal_emb = np.random.rand(384).astype(np.float32)
-        ideal_emb = ideal_emb / np.linalg.norm(ideal_emb)
+    def test_deny_match_blocks(self):
+        config = CompanyFilterConfig(deny=["Talentify"])
+        filt = CompanyFilter()
+        raw = _make_raw_posting()
+        posting = _make_posting()
+        parse_result = _make_parse_result()
+        decision = filt.check(raw, posting, parse_result, "Talentify Inc", config)
+        assert decision.passed is False
+        assert decision.skip_reason == "company_deny"
 
-        with patch("quarry.pipeline.filter.embed_posting") as mock_embed:
-            mock_embed.return_value = ideal_emb
-            result = filter_posting(raw, ideal_emb, threshold=0.3, blocklist=[])
+    def test_deny_no_match_passes(self):
+        config = CompanyFilterConfig(deny=["Talentify"])
+        filt = CompanyFilter()
+        raw = _make_raw_posting()
+        posting = _make_posting()
+        parse_result = _make_parse_result()
+        decision = filt.check(raw, posting, parse_result, "Acme Corp", config)
+        assert decision.passed is True
 
-        assert isinstance(result, FilterDecision)
-        assert result.passed is True
-        assert result.skip_reason is None
+    def test_allow_match_passes(self):
+        config = CompanyFilterConfig(allow=["Acme Corp"])
+        filt = CompanyFilter()
+        raw = _make_raw_posting()
+        posting = _make_posting()
+        parse_result = _make_parse_result()
+        decision = filt.check(raw, posting, parse_result, "Acme Corp", config)
+        assert decision.passed is True
 
-    def test_blocks_low_similarity(self):
-        from unittest.mock import patch
+    def test_allow_no_match_blocks(self):
+        config = CompanyFilterConfig(allow=["Acme Corp"])
+        filt = CompanyFilter()
+        raw = _make_raw_posting()
+        posting = _make_posting()
+        parse_result = _make_parse_result()
+        decision = filt.check(raw, posting, parse_result, "Other Corp", config)
+        assert decision.passed is False
+        assert decision.skip_reason == "company_allow_skip"
 
-        raw = RawPosting(
-            company_id=1,
-            title="Line Cook",
-            url="https://example.com/2",
-            description="Prepare meals in kitchen",
-            source_type="lever",
-        )
-        ideal_emb = np.zeros(384, dtype=np.float32)
-        ideal_emb[0] = 1.0
+    def test_none_company_name_passes(self):
+        config = CompanyFilterConfig(deny=["Talentify"])
+        filt = CompanyFilter()
+        raw = _make_raw_posting()
+        posting = _make_posting()
+        parse_result = _make_parse_result()
+        decision = filt.check(raw, posting, parse_result, None, config)
+        assert decision.passed is True
 
-        posting_emb = np.zeros(384, dtype=np.float32)
-        posting_emb[200] = 1.0
-
-        with patch("quarry.pipeline.filter.embed_posting") as mock_embed:
-            mock_embed.return_value = posting_emb
-            result = filter_posting(raw, ideal_emb, threshold=0.58, blocklist=[])
-
-        assert result.passed is False
-        assert result.skip_reason == "low_similarity"
-
-    def test_blocks_blocklisted_keyword(self):
-        from unittest.mock import patch
-
-        raw = RawPosting(
-            company_id=1,
-            title="Staffing Agency Recruiter",
-            url="https://example.com/3",
-            description="Recruit for staffing agency",
-            source_type="greenhouse",
-        )
-        ideal_emb = np.ones(384, dtype=np.float32)
-        ideal_emb = ideal_emb / np.linalg.norm(ideal_emb)
-
-        with patch("quarry.pipeline.filter.embed_posting") as mock_embed:
-            mock_embed.return_value = ideal_emb.copy()
-            result = filter_posting(
-                raw, ideal_emb, threshold=0.3, blocklist=["staffing agency"]
-            )
-
-        assert result.passed is False
-        assert result.skip_reason == "blocklist"
+    def test_case_insensitive_normalized(self):
+        config = CompanyFilterConfig(deny=["talentify"])
+        filt = CompanyFilter()
+        raw = _make_raw_posting()
+        posting = _make_posting()
+        parse_result = _make_parse_result()
+        decision = filt.check(raw, posting, parse_result, "TALENTIFY Inc.", config)
+        assert decision.passed is False
 
 
-class TestApplyLocationFilter:
-    def test_no_filter_config_passes_all(self):
-        posting = JobPosting(
-            company_id=1, title="Eng", title_hash="h", url="https://example.com"
-        )
-        parse_result = ParseResult(
-            work_model=None,
-            locations=[
-                ParsedLocation(
-                    canonical_name="New York, NY",
-                    city="New York",
-                    state_code="NY",
-                    country_code="US",
-                    region="US-East",
-                )
-            ],
-        )
-        passed, reason = apply_location_filter(posting, parse_result, settings=None)
-        assert passed is True
+class TestLocationFilter:
+    def test_empty_target_location_passes_all(self):
+        config = LocationFilterConfig()
+        filt = LocationFilter()
+        raw = _make_raw_posting(location="New York, NY")
+        posting = _make_posting(location="New York, NY")
+        decision = filt.check(raw, posting, _nyc_result, "Acme Corp", config)
+        assert decision.passed is True
 
     def test_accept_remote_passes(self):
-        posting = JobPosting(
-            company_id=1, title="Eng", title_hash="h", url="https://example.com"
+        config = LocationFilterConfig(
+            target_location=["San Francisco"], accept_remote=True
         )
+        filt = LocationFilter()
         parse_result = ParseResult(work_model="remote", locations=[])
-        settings = {"location_filter": {"accept_remote": True}}
-        passed, reason = apply_location_filter(posting, parse_result, settings=settings)
-        assert passed is True
+        raw = _make_raw_posting()
+        posting = _make_posting()
+        decision = filt.check(raw, posting, parse_result, "Acme Corp", config)
+        assert decision.passed is True
 
-    def test_reject_non_remote_when_no_accept_remote(self):
-        posting = JobPosting(
-            company_id=1, title="Eng", title_hash="h", url="https://example.com"
+    def test_reject_non_remote_when_no_match(self):
+        config = LocationFilterConfig(
+            target_location=["San Francisco"], accept_remote=False
         )
-        parse_result = ParseResult(
-            work_model=None,
-            locations=[
-                ParsedLocation(
-                    canonical_name="Chicago, IL",
-                    city="Chicago",
-                    state_code="IL",
-                    country_code="US",
-                    region="US-Central",
-                )
-            ],
-        )
-        settings = {
-            "location_filter": {
-                "accept_remote": False,
-                "accept_nearby": True,
-                "nearby_cities": ["SF"],
-            }
-        }
-        passed, reason = apply_location_filter(posting, parse_result, settings=settings)
-        assert passed is False
-        assert reason == "location"
+        filt = LocationFilter()
+        raw = _make_raw_posting(location="New York, NY")
+        posting = _make_posting(location="New York, NY")
+        decision = filt.check(raw, posting, _nyc_result, "Acme Corp", config)
+        assert decision.passed is False
+        assert decision.skip_reason == "location"
 
-    def test_accept_nearby_matching_city(self):
-        posting = JobPosting(
-            company_id=1, title="Eng", title_hash="h", url="https://example.com"
-        )
+    def test_match_via_resolved_city(self):
+        config = LocationFilterConfig(target_location=["San Francisco"])
+        config.normalize_config()
+        filt = LocationFilter()
         parse_result = ParseResult(
             work_model=None,
             locations=[
@@ -282,64 +282,32 @@ class TestApplyLocationFilter:
                     canonical_name="San Francisco, CA",
                     city="San Francisco",
                     state_code="CA",
-                    country_code="US",
                     region="US-West",
                 )
             ],
         )
-        settings = {
-            "location_filter": {
-                "accept_nearby": True,
-                "nearby_cities": ["San Francisco"],
-            }
-        }
-        passed, reason = apply_location_filter(posting, parse_result, settings=settings)
-        assert passed is True
+        raw = _make_raw_posting(location="San Francisco, CA")
+        posting = _make_posting(location="San Francisco, CA")
+        decision = filt.check(raw, posting, parse_result, "Acme Corp", config)
+        assert decision.passed is True
 
-    def test_reject_non_nearby(self):
-        posting = JobPosting(
-            company_id=1, title="Eng", title_hash="h", url="https://example.com"
+    def test_match_via_accept_states(self):
+        config = LocationFilterConfig(
+            target_location=["San Francisco"], accept_states=["NY"]
         )
-        parse_result = ParseResult(
-            work_model=None,
-            locations=[
-                ParsedLocation(
-                    canonical_name="New York, NY",
-                    city="New York",
-                    state_code="NY",
-                    country_code="US",
-                    region="US-East",
-                )
-            ],
-        )
-        settings = {
-            "location_filter": {
-                "accept_nearby": True,
-                "nearby_cities": ["San Francisco"],
-            }
-        }
-        passed, reason = apply_location_filter(posting, parse_result, settings=settings)
-        assert passed is False
-        assert reason == "location"
+        config.normalize_config()
+        filt = LocationFilter()
+        raw = _make_raw_posting()
+        posting = _make_posting()
+        decision = filt.check(raw, posting, _nyc_result, "Acme Corp", config)
+        assert decision.passed is True
 
-    def test_empty_locations_passes(self):
-        posting = JobPosting(
-            company_id=1, title="Eng", title_hash="h", url="https://example.com"
+    def test_match_via_accept_regions(self):
+        config = LocationFilterConfig(
+            target_location=["Chicago"], accept_regions=["US-West"]
         )
-        parse_result = ParseResult(work_model=None, locations=[])
-        settings = {
-            "location_filter": {
-                "accept_nearby": True,
-                "nearby_cities": ["San Francisco"],
-            }
-        }
-        passed, reason = apply_location_filter(posting, parse_result, settings=settings)
-        assert passed is True
-
-    def test_accept_regions_matching(self):
-        posting = JobPosting(
-            company_id=1, title="Eng", title_hash="h", url="https://example.com"
-        )
+        config.normalize_config()
+        filt = LocationFilter()
         parse_result = ParseResult(
             work_model=None,
             locations=[
@@ -347,17 +315,39 @@ class TestApplyLocationFilter:
                     canonical_name="Portland, OR",
                     city="Portland",
                     state_code="OR",
-                    country_code="US",
                     region="US-West",
                 )
             ],
         )
-        settings = {
-            "location_filter": {
-                "accept_nearby": True,
-                "nearby_cities": ["San Francisco"],
-                "accept_regions": ["US-West"],
-            }
-        }
-        passed, reason = apply_location_filter(posting, parse_result, settings=settings)
-        assert passed is True
+        raw = _make_raw_posting()
+        posting = _make_posting()
+        decision = filt.check(raw, posting, parse_result, "Acme Corp", config)
+        assert decision.passed is True
+
+    def test_non_matching_location_rejected(self):
+        config = LocationFilterConfig(target_location=["San Francisco"])
+        config.normalize_config()
+        filt = LocationFilter()
+        raw = _make_raw_posting()
+        posting = _make_posting()
+        decision = filt.check(raw, posting, _nyc_result, "Acme Corp", config)
+        assert decision.passed is False
+        assert decision.skip_reason == "location"
+
+    def test_empty_parse_result_locations_passes(self):
+        config = LocationFilterConfig(target_location=["San Francisco"])
+        config.normalize_config()
+        filt = LocationFilter()
+        parse_result = ParseResult(work_model=None, locations=[])
+        raw = _make_raw_posting()
+        posting = _make_posting()
+        decision = filt.check(raw, posting, parse_result, "Acme Corp", config)
+        assert decision.passed is True
+
+
+class TestFilterSteps:
+    def test_filter_steps_list_exists(self):
+        assert len(FILTER_STEPS) == 3
+        assert isinstance(FILTER_STEPS[0], KeywordBlocklistFilter)
+        assert isinstance(FILTER_STEPS[1], CompanyFilter)
+        assert isinstance(FILTER_STEPS[2], LocationFilter)

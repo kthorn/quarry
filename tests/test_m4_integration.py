@@ -1,8 +1,9 @@
-"""Integration tests for the full M4 pipeline: extract → embed → filter → store."""
+"""Integration tests for the full M4 pipeline: extract -> filter -> embed -> store."""
 
 import numpy as np
 import pytest
 
+from quarry.config import KeywordBlocklistConfig
 from quarry.models import RawPosting
 from quarry.pipeline.embedder import (
     deserialize_embedding,
@@ -11,7 +12,10 @@ from quarry.pipeline.embedder import (
     set_ideal_embedding,
 )
 from quarry.pipeline.extract import extract
-from quarry.pipeline.filter import filter_posting
+from quarry.pipeline.filter import (
+    KeywordBlocklistFilter,
+    embed_and_score,
+)
 from quarry.store.db import init_db
 
 
@@ -30,7 +34,7 @@ def seed_company(db):
 
 
 class TestEndToEndPipeline:
-    def test_extract_embed_filter_store(self, db, seed_company):
+    def test_extract_embed_and_store(self, db, seed_company):
         ideal_desc = "Senior people analytics leader at a growth-stage tech company"
         ideal_emb = set_ideal_embedding(db, ideal_desc)
 
@@ -46,11 +50,10 @@ class TestEndToEndPipeline:
         posting, _ = extract(raw)
         assert posting.work_model in ("remote", "hybrid")
 
-        result = filter_posting(raw, ideal_emb, threshold=0.3, blocklist=[])
-        assert result.passed is True
-        assert result.skip_reason is None
+        score, _ = embed_and_score(raw, ideal_emb)
+        assert score > 0.0
 
-        posting.similarity_score = 0.5
+        posting.similarity_score = score
 
         posting_id = db.insert_posting(posting)
         assert posting_id > 0
@@ -58,12 +61,9 @@ class TestEndToEndPipeline:
         fetched_postings = db.get_postings(status="new")
         assert len(fetched_postings) >= 1
         fetched = fetched_postings[0]
-        assert fetched.similarity_score == 0.5
+        assert fetched.similarity_score == score
 
     def test_blocklisted_posting_rejected(self, db, seed_company):
-        ideal_emb = np.ones(384, dtype=np.float32)
-        ideal_emb = ideal_emb / np.linalg.norm(ideal_emb)
-
         raw = RawPosting(
             company_id=seed_company,
             title="Staffing Agency Recruiter",
@@ -72,27 +72,27 @@ class TestEndToEndPipeline:
             source_type="greenhouse",
         )
 
-        result = filter_posting(
-            raw, ideal_emb, threshold=0.3, blocklist=["staffing agency"]
-        )
-        assert result.passed is False
-        assert result.skip_reason == "blocklist"
+        filt = KeywordBlocklistFilter()
+        config = KeywordBlocklistConfig(keywords=["staffing agency"])
+        posting, parse_result = extract(raw)
+        decision = filt.check(raw, posting, parse_result, "TestCorp", config)
+        assert decision.passed is False
+        assert decision.skip_reason == "blocklist"
 
-    def test_low_similarity_rejected(self, db, seed_company):
-        ideal_emb = np.zeros(384, dtype=np.float32)
-        ideal_emb[0] = 1.0
-
+    def test_filter_pipeline_passes_relevant(self, db, seed_company):
         raw = RawPosting(
             company_id=seed_company,
-            title="Line Cook",
+            title="Senior Engineer",
             url="https://example.com/job/3",
-            description="Prepare food in restaurant kitchen",
-            source_type="lever",
+            description="Build great products",
+            source_type="greenhouse",
         )
 
-        result = filter_posting(raw, ideal_emb, threshold=0.58, blocklist=[])
-        assert result.passed is False
-        assert result.skip_reason == "low_similarity"
+        filt = KeywordBlocklistFilter()
+        config = KeywordBlocklistConfig()
+        posting, parse_result = extract(raw)
+        decision = filt.check(raw, posting, parse_result, "TestCorp", config)
+        assert decision.passed is True
 
     def test_ideal_embedding_persists(self, db):
         desc = "Senior people analytics or HR technology leader"

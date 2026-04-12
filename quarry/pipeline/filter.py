@@ -1,29 +1,26 @@
-"""Similarity filtering and keyword blocklist for job postings.
+"""Similarity scoring and filter pipeline for job postings.
 
 Scores postings against the ideal role embedding using cosine similarity,
-then applies a keyword blocklist to reject irrelevant postings.
+then applies a filter pipeline (keyword blocklist, company, location) to
+reject irrelevant postings before embedding.
 """
 
-import logging
+import re
 
 import numpy as np
 
+from quarry.config import (
+    CompanyFilterConfig,
+    FiltersConfig,
+    KeywordBlocklistConfig,
+    LocationFilterConfig,
+)
 from quarry.models import FilterDecision, JobPosting, ParseResult, RawPosting
 from quarry.pipeline.embedder import embed_posting
 
-log = logging.getLogger(__name__)
-
 
 def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
-    """Compute cosine similarity between two vectors.
-
-    Args:
-        a: First vector.
-        b: Second vector.
-
-    Returns:
-        Cosine similarity in [-1, 1]. Returns 0.0 if either vector is zero.
-    """
+    """Compute cosine similarity between two vectors."""
     norm_a = np.linalg.norm(a)
     norm_b = np.linalg.norm(b)
     if norm_a == 0.0 or norm_b == 0.0:
@@ -34,128 +31,112 @@ def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
 def score_similarity(
     posting_embedding: np.ndarray, ideal_embedding: np.ndarray
 ) -> float:
-    """Score a posting's relevance against the ideal role embedding.
-
-    Args:
-        posting_embedding: Embedding of the job posting.
-        ideal_embedding: Embedding of the ideal role description.
-
-    Returns:
-        Cosine similarity score in [-1, 1]. Higher = more relevant.
-    """
+    """Score a posting's relevance against the ideal role embedding."""
     return cosine_similarity(posting_embedding, ideal_embedding)
 
 
-def apply_keyword_blocklist(posting: RawPosting, blocklist: list[str]) -> bool:
-    """Check if a posting passes the keyword blocklist.
-
-    A posting fails if any blocklisted phrase appears as a case-insensitive
-    substring in the title, description, or location.
-
-    Args:
-        posting: RawPosting to check.
-        blocklist: List of keyword phrases to reject.
-
-    Returns:
-        True if the posting passes (no blocklisted keywords found),
-        False if it should be filtered out.
-    """
-    if not blocklist:
-        return True
-
-    text = " ".join(
-        filter(None, [posting.title, posting.description, posting.location])
-    ).lower()
-
-    for phrase in blocklist:
-        if phrase.lower() in text:
-            log.debug("Blocklisted posting '%s': matched '%s'", posting.title, phrase)
-            return False
-
-    return True
+def embed_and_score(
+    raw: RawPosting, ideal_embedding: np.ndarray
+) -> tuple[float, np.ndarray]:
+    """Embed a posting and compute similarity score. Returns (score, embedding)."""
+    embedding = embed_posting(raw)
+    score = score_similarity(embedding, ideal_embedding)
+    return round(score, 4), embedding
 
 
-def filter_posting(
-    posting: RawPosting,
-    ideal_embedding: np.ndarray,
-    threshold: float | None = None,
-    blocklist: list[str] | None = None,
-) -> FilterDecision:
-    """Filter a single posting through similarity scoring and blocklist.
-
-    Pipeline: embed posting → score similarity → check blocklist → return result.
-
-    The similarity score is always computed and included in the result,
-    even if the posting is blocked. Blocked postings get skip_reason set.
-
-    Args:
-        posting: RawPosting to evaluate.
-        ideal_embedding: Embedding of the ideal role description.
-        threshold: Minimum cosine similarity to pass. If None, reads from
-                   config settings (default 0.58 in config.yaml).
-        blocklist: Keyword phrases that cause rejection.
-
-    Returns:
-        FilterDecision with pass/fail status and skip reason.
-    """
-    if threshold is None:
-        from quarry.config import settings
-
-        threshold = settings.similarity_threshold
-    blocklist = blocklist or []
-
-    posting_embedding = embed_posting(posting)
-    similarity = score_similarity(posting_embedding, ideal_embedding)
-
-    if not apply_keyword_blocklist(posting, blocklist):
-        return FilterDecision(passed=False, skip_reason="blocklist")
-
-    if similarity < threshold:
-        return FilterDecision(passed=False, skip_reason="low_similarity")
-
-    return FilterDecision(passed=True)
+def _normalize_company_name(name: str) -> str:
+    return re.sub(r"[^\w\s]", "", name.lower()).strip()
 
 
-def apply_location_filter(
-    posting: JobPosting,
-    parse_result: ParseResult,
-    settings: dict | None = None,
-) -> tuple[bool, str | None]:
-    """Apply location filter to a posting using its ParseResult.
+class KeywordBlocklistFilter:
+    def get_config(
+        self, filters_config: FiltersConfig | None
+    ) -> KeywordBlocklistConfig:
+        if filters_config is None or filters_config.keyword_blocklist is None:
+            return KeywordBlocklistConfig()
+        return filters_config.keyword_blocklist
 
-    Args:
-        posting: JobPosting (for context).
-        parse_result: Parsed location data with work_model and locations.
-        settings: Dict with optional 'location_filter' key.
+    def check(
+        self,
+        raw: RawPosting,
+        posting: JobPosting,
+        parse_result: ParseResult,
+        company_name: str | None,
+        config: KeywordBlocklistConfig,
+    ) -> FilterDecision:
+        if not config.keywords:
+            return FilterDecision(passed=True)
+        text = " ".join(
+            filter(None, [raw.title, raw.description, raw.location])
+        ).lower()
+        for phrase in config.keywords:
+            if phrase.lower() in text:
+                for override in config.passlist:
+                    if override.lower() in text:
+                        return FilterDecision(passed=True)
+                return FilterDecision(passed=False, skip_reason="blocklist")
+        return FilterDecision(passed=True)
 
-    Returns:
-        Tuple of (passed: bool, skip_reason: str or None).
-    """
-    if settings is None:
-        return True, None
 
-    loc_config = settings.get("location_filter")
-    if loc_config is None:
-        return True, None
+class CompanyFilter:
+    def get_config(self, filters_config: FiltersConfig | None) -> CompanyFilterConfig:
+        if filters_config is None or filters_config.company_filter is None:
+            return CompanyFilterConfig()
+        return filters_config.company_filter
 
-    accept_remote = loc_config.get("accept_remote", False)
-    accept_nearby = loc_config.get("accept_nearby", False)
-    nearby_cities = [c.lower() for c in loc_config.get("nearby_cities", [])]
-    accept_regions = [r.lower() for r in loc_config.get("accept_regions", [])]
+    def check(
+        self,
+        raw: RawPosting,
+        posting: JobPosting,
+        parse_result: ParseResult,
+        company_name: str | None,
+        config: CompanyFilterConfig,
+    ) -> FilterDecision:
+        if not company_name:
+            return FilterDecision(passed=True)
+        normalized = _normalize_company_name(company_name)
+        if config.allow:
+            if any(
+                _normalize_company_name(a) in normalized
+                or normalized in _normalize_company_name(a)
+                for a in config.allow
+            ):
+                return FilterDecision(passed=True)
+            return FilterDecision(passed=False, skip_reason="company_allow_skip")
+        if config.deny:
+            if any(_normalize_company_name(d) in normalized for d in config.deny):
+                return FilterDecision(passed=False, skip_reason="company_deny")
+        return FilterDecision(passed=True)
 
-    if accept_remote and parse_result.work_model == "remote":
-        return True, None
 
-    if not parse_result.locations:
-        return True, None
+class LocationFilter:
+    def get_config(self, filters_config: FiltersConfig | None) -> LocationFilterConfig:
+        if filters_config is None or filters_config.location_filter is None:
+            return LocationFilterConfig()
+        return filters_config.location_filter
 
-    if accept_nearby:
+    def check(
+        self,
+        raw: RawPosting,
+        posting: JobPosting,
+        parse_result: ParseResult,
+        company_name: str | None,
+        config: LocationFilterConfig,
+    ) -> FilterDecision:
+        if not config.target_location:
+            return FilterDecision(passed=True)
+        if config.accept_remote and parse_result.work_model == "remote":
+            return FilterDecision(passed=True)
+        if not parse_result.locations:
+            return FilterDecision(passed=True)
         for loc in parse_result.locations:
-            if loc.city and loc.city.lower() in nearby_cities:
-                return True, None
-            if loc.state_code and loc.state_code.lower() in nearby_cities:
-                return True, None
-            if loc.region and loc.region.lower() in accept_regions:
-                return True, None
+            if loc.city and loc.city.lower() in config._resolved_cities:
+                return FilterDecision(passed=True)
+            if loc.state_code and loc.state_code.lower() in config._resolved_states:
+                return FilterDecision(passed=True)
+            if loc.region and loc.region.lower() in config._resolved_regions:
+                return FilterDecision(passed=True)
+        return FilterDecision(passed=False, skip_reason="location")
 
-    return False, "location"
+
+FILTER_STEPS: list = [KeywordBlocklistFilter(), CompanyFilter(), LocationFilter()]
