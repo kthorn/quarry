@@ -223,29 +223,50 @@ WHERE j.work_model IN ('remote', 'hybrid') AND l.region = 'US-West';
 
 ## Impact on Existing Code
 
+### `quarry/store/schema.py`
+- Add `locations` and `job_posting_locations` table DDL to `SCHEMA_SQL`
+- Add `work_model TEXT` column to `job_postings` DDL, remove `remote BOOLEAN`
+- Add indexes for location and work_model queries
+
+### `quarry/models.py`
+- `JobPosting` dataclass: replace `remote: bool | None` with `work_model: str | None` (values: `'remote'`, `'hybrid'`, `'onsite'`, `None`)
+- `RawPosting` dataclass: add optional `work_model: str | None = None` field
+- Update `__post_init__` or any computed fields that reference `remote`
+
 ### `quarry/pipeline/extract.py`
 - `normalize_location()` → replaced/supplemented by `parse_location()` from `locations.py`
-- `detect_remote()` → replaced by work model extraction + inference
-- `RawPosting` model → add optional `work_model` field
+- `detect_remote()` → replaced by work model extraction + inference (returns `str | None` instead of `bool | None`)
+- `extract()`: update to set `work_model` instead of `remote` on `JobPosting`
+- Keep `detect_remote()` temporarily as a fallback for work_model inference from description text, but change return type to match work model
 
 ### `quarry/store/db.py`
-- `insert_posting()` → also insert into `job_posting_locations`, set `work_model`
+- `insert_posting()` → update SQL to use `work_model` instead of `remote`; also insert into `job_posting_locations`, set `work_model`
 - Add `get_location_by_canonical_name()`, `create_location()`
 - Add `link_posting_location()`
 - Add query methods: `get_postings_by_location()`, `get_postings_by_region()`, `get_postings_by_work_model()`
+- All queries that reference `remote` need updating
 
 ### `quarry/agent/crawlers/*.py`
 - Greenhouse, Lever, Ashby crawlers → can continue setting raw `location` string; pipeline handles normalization
 - Remove ad-hoc `remote` boolean setting from crawlers (pipeline handles it)
+- Lever/Ashby crawlers that set `remote=True` based on `"remote" in location.lower()` → remove; work_model inference replaces this
 
 ### `quarry/pipeline/embedder.py`
 - `embed_posting()` → include canonical location name(s) and work_model in embedding text for better clustering
+- Need to join through `job_posting_locations` to get location names, or pass them alongside the posting
 
 ### `quarry/pipeline/filter.py`
 - No changes needed; `apply_keyword_blocklist()` already works on text fields
 
 ### `quarry/digest/digest.py`
-- `build_digest()` → use canonical location name + work_model instead of raw `location` string
+- `build_digest()` → use canonical location name + work_model instead of raw `location` and `remote` fields
+
+### Tests (must update)
+- `tests/test_extract.py`: references `result.remote` and `result.location` — update to `result.work_model` and check work_model values
+- `tests/test_digest.py`: creates postings with `remote=True` and `location=` — update to `work_model='remote'`
+- Any tests referencing `JobPosting(remote=...)` need `work_model=` instead
+- Add new tests for `quarry/pipeline/locations.py` (splitting, work model extraction, normalization, geonamescache resolution)
+- Add tests for `quarry/store/db.py` new location query methods
 
 ## Out of Scope
 
