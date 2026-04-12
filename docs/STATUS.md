@@ -5,7 +5,7 @@ Last updated: 2026-04-12
 ## Phase 1 — MVP Progress
 
 | Milestone | Status | Completed Plan |
-|-----------|--------|-----------------|
+|-----------|--------|----------------|
 | M1: Project scaffolding & database | **DONE** | 2026-04-05 |
 | M2: Crawlers (JobSpy + ATS endpoints) | **DONE** | 2026-04-06 |
 | M3: Extraction pipeline | **DONE** | 2026-04-07 |
@@ -21,6 +21,7 @@ Last updated: 2026-04-12
 - **Company resolver pipeline** (`quarry/resolve/`): domain resolution, careers URL detection, ATS type detection, `add-company` CLI command
 - **Location filter design spec**: added to docs
 - **Location normalization**: structured location parsing with `quarry/pipeline/locations.py`, `work_model` replacing `remote` boolean, `locations` + `job_posting_locations` tables, geonamescache-based resolution, location filtering in pipeline
+- **Unified filter pipeline**: `FilterStep` protocol with `KeywordBlocklistFilter`, `CompanyFilter`, `LocationFilter` classes; `FiltersConfig` Pydantic models with typed config; similarity as soft gate (threshold applied at read time, not write time); `recompute-similarity` CLI command
 - **Crawl log CSV**: ATS crawler 404 handling, noisy log suppression
 - **RUNBOOK.md**: pre-execution checklist and operational guide
 
@@ -34,6 +35,7 @@ All refined plans in `docs/plans/completed/`:
 5. `2026-04-10-scheduler-and-digest-minimal.md`
 6. `2026-04-10-seed-data.md`
 7. `2026-04-12-location-normalization.md` (in `docs/superpowers/plans/`)
+8. `2026-04-12-unified-filter-pipeline.md` (in `docs/superpowers/plans/`)
 
 ## Verification
 
@@ -42,7 +44,10 @@ All refined plans in `docs/plans/completed/`:
 - `python -m quarry.agent run-once` — single search cycle (mocked crawlers work; live crawlers need API keys)
 - `python -m quarry.digest` — writes ranked digest file
 - `python -m quarry.agent.tools normalize-locations` — parse and normalize location data for existing postings
-- `python -m pytest tests/` — **249 tests passing**
+- `python -m quarry.agent recompute-similarity` — recompute all similarity scores
+- `python -m pytest tests/` — **266 tests passing**
+- `ruff check .` — lint clean
+- `pyright quarry/` — type check clean
 
 ## Next Steps
 
@@ -53,6 +58,17 @@ All refined plans in `docs/plans/completed/`:
 
 ## Key Files
 
+```
+quarry/
+├── agent/          scheduler, tools (seed, recompute-similarity), CLI
+├── crawlers/       greenhouse, lever, ashby, careers_page, jobspy_client
+├── digest/         build + write digest file
+├── pipeline/       extract, embedder, filter (FilterStep classes), locations
+├── resolve/        company resolver (domain, ATS detection)
+├── store/          db.py, schema.sql
+├── config.py       Settings (Pydantic + YAML), FiltersConfig models
+├── models.py       Pydantic models, FilterDecision dataclass
+└── http.py         shared HTTP client
 ```
 quarry/
 ├── agent/          scheduler, tools (seed), CLI
