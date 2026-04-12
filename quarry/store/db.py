@@ -196,6 +196,21 @@ class Database:
         sql = "UPDATE job_postings SET similarity_score = ? WHERE id = ?"
         self.execute(sql, (score, posting_id))
 
+    def update_posting_similarities(
+        self, posting_id_scores: list[tuple[int, float]]
+    ) -> None:
+        """Bulk update similarity scores for multiple postings."""
+        if not posting_id_scores:
+            return
+        sql = "UPDATE job_postings SET similarity_score = ? WHERE id = ?"
+        self.executemany(sql, [(score, pid) for pid, score in posting_id_scores])
+
+    def get_all_postings_with_embeddings(self) -> list[models.JobPosting]:
+        """Get all postings that have embeddings stored."""
+        sql = "SELECT * FROM job_postings WHERE embedding IS NOT NULL"
+        rows = self.execute(sql)
+        return [models.JobPosting(**dict(row)) for row in rows]
+
     def get_postings(
         self, status: str | None = None, limit: int = 100
     ) -> list[models.JobPosting]:
@@ -293,24 +308,29 @@ class Database:
             return cursor.lastrowid or 0
 
     def get_recent_postings(
-        self, limit: int = 100, status: str = "new"
+        self, limit: int = 100, status: str = "new", threshold: float | None = None
     ) -> list[models.JobPosting]:
         """Get recent postings ordered by similarity_score descending.
 
         Args:
             limit: Maximum number of postings to return.
             status: Filter by posting status.
+            threshold: Minimum similarity score. If None, uses settings default.
 
         Returns:
             List of JobPosting objects sorted by similarity_score descending.
         """
+        if threshold is None:
+            from quarry.config import settings
+
+            threshold = settings.similarity_threshold
         sql = """
             SELECT * FROM job_postings
-            WHERE status = ?
+            WHERE status = ? AND similarity_score >= ?
             ORDER BY similarity_score DESC
             LIMIT ?
         """
-        rows = self.execute(sql, (status, limit))
+        rows = self.execute(sql, (status, threshold, limit))
         return [models.JobPosting(**dict(row)) for row in rows]
 
     def mark_postings_seen(self, posting_ids: list[int]) -> None:

@@ -253,3 +253,24 @@ def test_get_postings_by_region(tmp_path):
 
     results = db.get_postings_by_region("US-West")
     assert len(results) >= 1
+
+
+def test_get_recent_postings_with_threshold(tmp_path):
+    """Postings below threshold are filtered out at read time."""
+    db = init_db(tmp_path / "test.db")
+    company = Company(name="TestCorp")
+    cid = db.insert_company(company)
+
+    for i, score in enumerate([0.8, 0.5, 0.2]):
+        posting = JobPosting(
+            company_id=cid,
+            title=f"Job {i}",
+            title_hash=f"hash_thresh_{i}",
+            url=f"https://example.com/thresh_{i}",
+            similarity_score=score,
+        )
+        db.insert_posting(posting)
+
+    results = db.get_recent_postings(threshold=0.5)
+    for p in results:
+        assert p.similarity_score >= 0.5
