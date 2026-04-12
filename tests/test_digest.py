@@ -23,7 +23,7 @@ def db_with_postings(db):
             url=f"https://example.com/job/{i}",
             description=f"Great analytics role {i}",
             location="Remote, US",
-            remote=True,
+            work_model="remote",
             similarity_score=0.8 - i * 0.1,
             source_type="greenhouse",
         )

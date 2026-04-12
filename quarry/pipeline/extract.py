@@ -12,7 +12,8 @@ import re
 
 from bs4 import BeautifulSoup
 
-from quarry.models import JobPosting, RawPosting
+from quarry.models import JobPosting, ParseResult, RawPosting
+from quarry.pipeline.locations import parse_location
 
 
 def strip_html(html: str) -> str:
@@ -54,35 +55,27 @@ def normalize_whitespace(text: str) -> str:
     return text
 
 
-def detect_remote(text: str) -> bool | None:
-    """Detect if a job posting is remote using keyword heuristics.
+def detect_work_model(text: str) -> str | None:
+    """Detect work model from job description text.
 
-    Returns True if remote indicators found, False if onsite indicators found,
-    None if no clear indicators.
-
-    Args:
-        text: Job description text to analyze
-
-    Returns:
-        True if remote, False if onsite, None if unclear
+    Returns 'remote', 'hybrid', 'onsite', or None.
     """
     if not text:
         return None
 
     text_lower = text.lower()
 
-    # Hybrid indicators (always counts as remote, check first)
-    hybrid_patterns = [
-        r"\bhybrid\b",
-        r"\bremote-first\b",
-        r"\bdistributed team\b",
+    onsite_patterns = [
+        r"\bon[- ]?site\b",
+        r"\bin[- ]?office\b",
+        r"\bin office\b",
+        r"\brelocation required\b",
     ]
 
-    # Check hybrid first - always counts as remote
-    if any(re.search(p, text_lower) for p in hybrid_patterns):
-        return True
+    hybrid_patterns = [
+        r"\bhybrid\b",
+    ]
 
-    # Remote indicators (strong)
     remote_patterns = [
         r"\bremote\b",
         r"\bwork from home\b",
@@ -90,42 +83,41 @@ def detect_remote(text: str) -> bool | None:
         r"\bfully remote\b",
         r"\b100% remote\b",
         r"\bwork remotely\b",
+        r"\bremote-first\b",
+        r"\bdistributed team\b",
     ]
 
-    # Onsite indicators (strong office requirement)
-    onsite_patterns = [
-        r"\bon[- ]?site\b",
-        r"\bin[- ]?office\b",
-        r"\bin office\b",
-        r"\brelocation required\b",
-        r"\bno remote\b",
-        r"\bnot remote\b",
-        r"\bmust (be )?(located|based) in\b",
-    ]
-
-    # Check for onsite indicators
     has_onsite = any(re.search(p, text_lower) for p in onsite_patterns)
+    has_hybrid = any(re.search(p, text_lower) for p in hybrid_patterns)
 
-    # Check for remote indicators, excluding "remote" in company name context
-    has_other_remote = any(
+    has_remote = any(
         re.search(p, text_lower) for p in remote_patterns if p != r"\bremote\b"
     )
-    has_remote_excluding_company = (
+    has_remote_word = (
         re.search(r"\bremote\b(?!\s+(inc|corp|llc|ltd|co|company)\b)", text_lower)
         is not None
     )
-    has_remote = has_remote_excluding_company or has_other_remote
+    has_remote = has_remote or has_remote_word
 
-    # If both remote and onsite present, prefer onsite (more specific)
-    if has_remote and has_onsite:
-        return False
-    # If remote found
+    if has_onsite and not has_hybrid and not has_remote:
+        return "onsite"
+    if has_hybrid:
+        return "hybrid"
     if has_remote:
-        return True
-    # If onsite found
-    if has_onsite:
-        return False
+        return "remote"
+    return None
 
+
+def detect_remote(text: str) -> bool | None:
+    """Backward-compatible wrapper: detect_work_model → bool.
+
+    Returns True for 'remote' or 'hybrid', False for 'onsite', None for unknown.
+    """
+    model = detect_work_model(text)
+    if model == "onsite":
+        return False
+    if model in ("remote", "hybrid"):
+        return True
     return None
 
 
@@ -181,48 +173,47 @@ def hash_title(title: str) -> str:
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
-def extract(raw: RawPosting) -> JobPosting:
-    """Extract and transform RawPosting into JobPosting.
+def extract(raw: RawPosting) -> tuple[JobPosting, ParseResult]:
+    """Extract and transform RawPosting into JobPosting + ParseResult.
 
     Performs:
     - HTML stripping and text normalization
-    - Remote work detection
-    - Location normalization
+    - Work model detection
+    - Location parsing
     - Title hashing for deduplication
 
     Args:
         raw: RawPosting from crawler
 
     Returns:
-        JobPosting ready for database storage
+        Tuple of (JobPosting, ParseResult).
     """
-    # Process description
     description = None
     if raw.description:
         description = strip_html(raw.description)
 
-    # Detect remote status from combined signals
-    remote = None
-    combined_text = " ".join(filter(None, [raw.title, description, raw.location]))
-    if combined_text:
-        remote = detect_remote(combined_text)
+    parse_result = parse_location(raw.location)
 
-    # Normalize location
+    work_model = parse_result.work_model
+    if work_model is None:
+        combined_text = " ".join(filter(None, [raw.title, description, raw.location]))
+        if combined_text:
+            work_model = detect_work_model(combined_text)
+
     location = normalize_location(raw.location)
-
-    # Hash title for deduplication
     title_hash = hash_title(raw.title)
 
-    # Create JobPosting
-    return JobPosting(
+    posting = JobPosting(
         company_id=raw.company_id,
         title=raw.title,
         title_hash=title_hash,
         url=raw.url,
         description=description,
         location=location,
-        remote=remote,
+        work_model=work_model,
         posted_at=raw.posted_at,
         source_id=raw.source_id,
         source_type=raw.source_type,
     )
+
+    return posting, parse_result

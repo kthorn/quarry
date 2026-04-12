@@ -134,7 +134,7 @@ class Database:
     def insert_posting(self, posting: models.JobPosting) -> int:
         sql = """
             INSERT INTO job_postings (company_id, title, title_hash, url, description,
-                location, remote, posted_at, source_id, source_type, similarity_score,
+                location, work_model, posted_at, source_id, source_type, similarity_score,
                 classifier_score, embedding, fit_score, role_tier, fit_reason,
                 key_requirements, enriched_at, status, first_seen_at, last_seen_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -149,7 +149,7 @@ class Database:
                     posting.url,
                     posting.description,
                     posting.location,
-                    posting.remote,
+                    posting.work_model,
                     posting.posted_at,
                     posting.source_id,
                     posting.source_type,
@@ -337,6 +337,68 @@ class Database:
         sql = "SELECT name FROM companies WHERE id = ?"
         rows = self.execute(sql, (company_id,))
         return rows[0]["name"] if rows else None
+
+    def get_or_create_location(self, parsed) -> int:
+        existing = self.execute(
+            "SELECT id FROM locations WHERE canonical_name = ?",
+            (parsed.canonical_name,),
+        )
+        if existing:
+            return existing[0]["id"]
+
+        sql = """
+            INSERT INTO locations (canonical_name, city, state, state_code,
+                country, country_code, region, latitude, longitude,
+                resolution_status, raw_fragment)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                sql,
+                (
+                    parsed.canonical_name,
+                    parsed.city,
+                    parsed.state,
+                    parsed.state_code,
+                    parsed.country,
+                    parsed.country_code,
+                    parsed.region,
+                    parsed.latitude,
+                    parsed.longitude,
+                    parsed.resolution_status,
+                    parsed.raw_fragment,
+                ),
+            )
+            return cursor.lastrowid or 0
+
+    def link_posting_location(self, posting_id: int, location_id: int) -> None:
+        sql = "INSERT OR IGNORE INTO job_posting_locations (posting_id, location_id) VALUES (?, ?)"
+        self.execute(sql, (posting_id, location_id))
+
+    def get_postings_by_work_model(self, work_model: str) -> list:
+        sql = "SELECT * FROM job_postings WHERE work_model = ?"
+        rows = self.execute(sql, (work_model,))
+        return [models.JobPosting(**dict(row)) for row in rows]
+
+    def get_postings_by_location(self, canonical_name: str) -> list:
+        sql = """
+            SELECT j.* FROM job_postings j
+            JOIN job_posting_locations jpl ON j.id = jpl.posting_id
+            JOIN locations l ON jpl.location_id = l.id
+            WHERE l.canonical_name = ?
+        """
+        rows = self.execute(sql, (canonical_name,))
+        return [models.JobPosting(**dict(row)) for row in rows]
+
+    def get_postings_by_region(self, region: str) -> list:
+        sql = """
+            SELECT DISTINCT j.* FROM job_postings j
+            JOIN job_posting_locations jpl ON j.id = jpl.posting_id
+            JOIN locations l ON jpl.location_id = l.id
+            WHERE l.region = ?
+        """
+        rows = self.execute(sql, (region,))
+        return [models.JobPosting(**dict(row)) for row in rows]
 
     def get_setting(self, key: str) -> str | None:
         sql = "SELECT value FROM settings WHERE key = ?"

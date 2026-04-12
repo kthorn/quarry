@@ -69,6 +69,9 @@ class Settings(BaseSettings):
     max_response_bytes: int = 1048576  # 1MB
     max_redirects: int = 5
 
+    # Location filter
+    location_filter: dict | None = None
+
 
 def load_config(config_path: Path | None = None) -> Settings:
     """Load config from YAML file, with env var overrides.

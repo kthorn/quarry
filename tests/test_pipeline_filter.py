@@ -3,9 +3,16 @@
 import numpy as np
 import pytest
 
-from quarry.models import FilterResult, RawPosting
+from quarry.models import (
+    FilterResult,
+    JobPosting,
+    ParsedLocation,
+    ParseResult,
+    RawPosting,
+)
 from quarry.pipeline.filter import (
     apply_keyword_blocklist,
+    apply_location_filter,
     cosine_similarity,
     filter_posting,
     score_similarity,
@@ -227,3 +234,151 @@ class TestFilterPosting:
             )
 
         assert result.similarity_score is not None
+
+
+class TestApplyLocationFilter:
+    def test_no_filter_config_passes_all(self):
+        posting = JobPosting(
+            company_id=1, title="Eng", title_hash="h", url="https://example.com"
+        )
+        parse_result = ParseResult(
+            work_model=None,
+            locations=[
+                ParsedLocation(
+                    canonical_name="New York, NY",
+                    city="New York",
+                    state_code="NY",
+                    country_code="US",
+                    region="US-East",
+                )
+            ],
+        )
+        passed, reason = apply_location_filter(posting, parse_result, settings=None)
+        assert passed is True
+
+    def test_accept_remote_passes(self):
+        posting = JobPosting(
+            company_id=1, title="Eng", title_hash="h", url="https://example.com"
+        )
+        parse_result = ParseResult(work_model="remote", locations=[])
+        settings = {"location_filter": {"accept_remote": True}}
+        passed, reason = apply_location_filter(posting, parse_result, settings=settings)
+        assert passed is True
+
+    def test_reject_non_remote_when_no_accept_remote(self):
+        posting = JobPosting(
+            company_id=1, title="Eng", title_hash="h", url="https://example.com"
+        )
+        parse_result = ParseResult(
+            work_model=None,
+            locations=[
+                ParsedLocation(
+                    canonical_name="Chicago, IL",
+                    city="Chicago",
+                    state_code="IL",
+                    country_code="US",
+                    region="US-Central",
+                )
+            ],
+        )
+        settings = {
+            "location_filter": {
+                "accept_remote": False,
+                "accept_nearby": True,
+                "nearby_cities": ["SF"],
+            }
+        }
+        passed, reason = apply_location_filter(posting, parse_result, settings=settings)
+        assert passed is False
+        assert reason == "location"
+
+    def test_accept_nearby_matching_city(self):
+        posting = JobPosting(
+            company_id=1, title="Eng", title_hash="h", url="https://example.com"
+        )
+        parse_result = ParseResult(
+            work_model=None,
+            locations=[
+                ParsedLocation(
+                    canonical_name="San Francisco, CA",
+                    city="San Francisco",
+                    state_code="CA",
+                    country_code="US",
+                    region="US-West",
+                )
+            ],
+        )
+        settings = {
+            "location_filter": {
+                "accept_nearby": True,
+                "nearby_cities": ["San Francisco"],
+            }
+        }
+        passed, reason = apply_location_filter(posting, parse_result, settings=settings)
+        assert passed is True
+
+    def test_reject_non_nearby(self):
+        posting = JobPosting(
+            company_id=1, title="Eng", title_hash="h", url="https://example.com"
+        )
+        parse_result = ParseResult(
+            work_model=None,
+            locations=[
+                ParsedLocation(
+                    canonical_name="New York, NY",
+                    city="New York",
+                    state_code="NY",
+                    country_code="US",
+                    region="US-East",
+                )
+            ],
+        )
+        settings = {
+            "location_filter": {
+                "accept_nearby": True,
+                "nearby_cities": ["San Francisco"],
+            }
+        }
+        passed, reason = apply_location_filter(posting, parse_result, settings=settings)
+        assert passed is False
+        assert reason == "location"
+
+    def test_empty_locations_passes(self):
+        posting = JobPosting(
+            company_id=1, title="Eng", title_hash="h", url="https://example.com"
+        )
+        parse_result = ParseResult(work_model=None, locations=[])
+        settings = {
+            "location_filter": {
+                "accept_nearby": True,
+                "nearby_cities": ["San Francisco"],
+            }
+        }
+        passed, reason = apply_location_filter(posting, parse_result, settings=settings)
+        assert passed is True
+
+    def test_accept_regions_matching(self):
+        posting = JobPosting(
+            company_id=1, title="Eng", title_hash="h", url="https://example.com"
+        )
+        parse_result = ParseResult(
+            work_model=None,
+            locations=[
+                ParsedLocation(
+                    canonical_name="Portland, OR",
+                    city="Portland",
+                    state_code="OR",
+                    country_code="US",
+                    region="US-West",
+                )
+            ],
+        )
+        settings = {
+            "location_filter": {
+                "accept_nearby": True,
+                "nearby_cities": ["San Francisco"],
+                "accept_regions": ["US-West"],
+            }
+        }
+        passed, reason = apply_location_filter(posting, parse_result, settings=settings)
+        assert passed is True

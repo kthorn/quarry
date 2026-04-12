@@ -47,11 +47,7 @@ class LeverCrawler(BaseCrawler):
         postings = []
         for job in jobs:
             categories = job.get("categories", {})
-
-            is_remote = None
             location = categories.get("location", "")
-            if location and "remote" in location.lower():
-                is_remote = True
 
             posting = RawPosting(
                 company_id=company_id,
@@ -59,7 +55,6 @@ class LeverCrawler(BaseCrawler):
                 url=job.get("hostedUrl", ""),
                 description=job.get("descriptionPlain"),
                 location=location,
-                remote=is_remote,
                 source_id=job.get("id"),
                 source_type="lever",
             )

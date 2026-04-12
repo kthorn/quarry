@@ -1,6 +1,6 @@
 import sqlite3
 
-from quarry.models import Company, JobPosting
+from quarry.models import Company, JobPosting, ParsedLocation
 from quarry.store.db import Database, init_db
 
 
@@ -127,3 +127,129 @@ def test_migrate_resolve_columns(tmp_path):
     assert row["resolve_status"] == "unresolved"
     assert row["resolve_attempts"] == 0
     conn.close()
+
+
+def test_locations_table_exists(tmp_path):
+    init_db(tmp_path / "test.db")
+    conn = sqlite3.connect(tmp_path / "test.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    tables = [row[0] for row in cursor.fetchall()]
+    conn.close()
+    assert "locations" in tables
+    assert "job_posting_locations" in tables
+
+
+def test_job_postings_has_work_model(tmp_path):
+    init_db(tmp_path / "test.db")
+    conn = sqlite3.connect(tmp_path / "test.db")
+    cursor = conn.cursor()
+    cursor.execute("PRAGMA table_info(job_postings)")
+    columns = {row[1] for row in cursor.fetchall()}
+    conn.close()
+    assert "work_model" in columns
+    assert "remote" not in columns
+
+
+def test_get_or_create_location_inserts_new(tmp_path):
+    db = init_db(tmp_path / "test.db")
+    parsed = ParsedLocation(
+        canonical_name="San Francisco, CA",
+        city="San Francisco",
+        state="California",
+        state_code="CA",
+        country="United States",
+        country_code="US",
+        region="US-West",
+    )
+    loc_id = db.get_or_create_location(parsed)
+    assert loc_id > 0
+
+
+def test_get_or_create_location_idempotent(tmp_path):
+    db = init_db(tmp_path / "test.db")
+    parsed = ParsedLocation(
+        canonical_name="San Francisco, CA",
+        city="San Francisco",
+        state="California",
+        state_code="CA",
+        country="United States",
+        country_code="US",
+        region="US-West",
+    )
+    id1 = db.get_or_create_location(parsed)
+    id2 = db.get_or_create_location(parsed)
+    assert id1 == id2
+
+
+def test_link_posting_location(tmp_path):
+    db = init_db(tmp_path / "test.db")
+    company = Company(name="TestCorp")
+    cid = db.insert_company(company)
+    posting = JobPosting(
+        company_id=cid,
+        title="Eng",
+        title_hash="loc_h1",
+        url="https://example.com/loc1",
+        work_model="remote",
+    )
+    pid = db.insert_posting(posting)
+    loc = ParsedLocation(canonical_name="Remote", country_code="US", region="US-West")
+    lid = db.get_or_create_location(loc)
+    db.link_posting_location(pid, lid)
+
+    postings = db.get_postings_by_work_model("remote")
+    assert len(postings) >= 1
+
+
+def test_get_postings_by_location(tmp_path):
+    db = init_db(tmp_path / "test.db")
+    company = Company(name="TestCorp")
+    cid = db.insert_company(company)
+    posting = JobPosting(
+        company_id=cid,
+        title="Eng",
+        title_hash="loc_h2",
+        url="https://example.com/loc2",
+        location="San Francisco, CA",
+    )
+    pid = db.insert_posting(posting)
+    loc = ParsedLocation(
+        canonical_name="San Francisco, CA",
+        city="San Francisco",
+        state_code="CA",
+        country_code="US",
+        region="US-West",
+    )
+    lid = db.get_or_create_location(loc)
+    db.link_posting_location(pid, lid)
+
+    results = db.get_postings_by_location("San Francisco, CA")
+    assert len(results) == 1
+    assert results[0].title == "Eng"
+
+
+def test_get_postings_by_region(tmp_path):
+    db = init_db(tmp_path / "test.db")
+    company = Company(name="TestCorp")
+    cid = db.insert_company(company)
+    posting = JobPosting(
+        company_id=cid,
+        title="Eng",
+        title_hash="loc_h3",
+        url="https://example.com/loc3",
+        location="SF",
+    )
+    pid = db.insert_posting(posting)
+    loc = ParsedLocation(
+        canonical_name="San Francisco, CA",
+        city="San Francisco",
+        state_code="CA",
+        country_code="US",
+        region="US-West",
+    )
+    lid = db.get_or_create_location(loc)
+    db.link_posting_location(pid, lid)
+
+    results = db.get_postings_by_region("US-West")
+    assert len(results) >= 1

@@ -53,3 +53,14 @@ max_concurrent_per_host: 3
 request_timeout: 10
 max_response_bytes: 1048576  # 1MB
 max_redirects: 5
+
+# === Location filter ===
+# location_filter:
+#   user_location: "San Francisco, CA"
+#   accept_remote: true
+#   accept_nearby: true
+#   nearby_cities:
+#     - "San Francisco"
+#     - "Oakland"
+#   accept_regions:
+#     - "US-West"

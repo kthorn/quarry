@@ -145,5 +145,53 @@ def seed_command(seed_file):
     click.echo(f"Seeded {inserted} entries, skipped {skipped}")
 
 
+@cli.command(name="normalize-locations")
+@click.option("--dry-run", is_flag=True, help="Report stats without making changes")
+def normalize_locations_command(dry_run: bool):
+    """Parse and normalize location data for all existing postings."""
+    from quarry.models import JobPosting
+    from quarry.pipeline.locations import parse_location
+
+    db = init_db(settings.db_path)
+
+    rows = db.execute(
+        "SELECT * FROM job_postings WHERE location IS NOT NULL AND location != ''"
+    )
+    parsed_postings = [JobPosting(**dict(row)) for row in rows]
+    click.echo(f"Found {len(parsed_postings)} postings with locations")
+
+    locations_created = 0
+    links_created = 0
+    unresolvable = 0
+
+    for posting in parsed_postings:
+        parse_result = parse_location(posting.location)
+
+        if parse_result.work_model and not posting.work_model:
+            if not dry_run:
+                db.execute(
+                    "UPDATE job_postings SET work_model = ? WHERE id = ?",
+                    (parse_result.work_model, posting.id),
+                )
+
+        for loc in parse_result.locations:
+            if not dry_run:
+                loc_id = db.get_or_create_location(loc)
+                db.link_posting_location(posting.id or 0, loc_id)
+            locations_created += 1
+            if loc.resolution_status == "needs_review":
+                unresolvable += 1
+                click.echo(
+                    f"  Needs review: {loc.raw_fragment} -> {loc.canonical_name}"
+                )
+            links_created += 1
+
+    click.echo(f"Locations created: {locations_created}")
+    click.echo(f"Links created: {links_created}")
+    click.echo(f"Unresolvable fragments: {unresolvable}")
+    if dry_run:
+        click.echo("(dry run — no changes made)")
+
+
 if __name__ == "__main__":
     cli()

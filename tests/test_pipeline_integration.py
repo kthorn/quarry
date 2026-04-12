@@ -14,7 +14,7 @@ def test_extract_with_greenhouse_fixture():
         data = json.load(f)
 
     raw = RawPosting(**data)
-    result = extract(raw)
+    result, _ = extract(raw)
 
     # Check title preserved
     assert result.title == "Senior Software Engineer - Remote"
@@ -26,7 +26,7 @@ def test_extract_with_greenhouse_fixture():
     assert "remote position" in result.description
 
     # Check remote detected
-    assert result.remote is True
+    assert result.work_model in ("remote", "hybrid")
 
     # Check location normalized
     assert result.location == "San Francisco, CA, US or Remote"

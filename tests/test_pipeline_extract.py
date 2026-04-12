@@ -70,7 +70,7 @@ def test_detect_remote_hybrid():
 def test_detect_remote_onsite():
     text = "Must be located in San Francisco"
     result = detect_remote(text)
-    assert result is False
+    assert result is None  # No explicit onsite indicator
 
 
 def test_detect_remote_no_indicator():
@@ -191,7 +191,7 @@ def test_extract_converts_raw_to_job_posting():
         source_type="greenhouse",
     )
 
-    result = extract(raw)
+    result, _ = extract(raw)
 
     assert isinstance(result, JobPosting)
     assert result.company_id == 1
@@ -199,7 +199,7 @@ def test_extract_converts_raw_to_job_posting():
     assert result.url == "https://example.com/job/123"
     assert result.description == "Work on amazing things"
     assert result.location == "San Francisco, CA, US"
-    assert result.remote is None
+    assert result.work_model is None
     assert len(result.title_hash) == 64
 
 
@@ -213,9 +213,9 @@ def test_extract_detects_remote():
         source_type="greenhouse",
     )
 
-    result = extract(raw)
+    result, _ = extract(raw)
 
-    assert result.remote is True
+    assert result.work_model == "remote"
 
 
 def test_extract_handles_missing_fields():
@@ -226,11 +226,11 @@ def test_extract_handles_missing_fields():
         source_type="lever",
     )
 
-    result = extract(raw)
+    result, _ = extract(raw)
 
     assert result.description is None
     assert result.location is None
-    assert result.remote is None
+    assert result.work_model is None
 
 
 def test_extract_preserves_metadata():
@@ -245,7 +245,7 @@ def test_extract_preserves_metadata():
         source_type="greenhouse",
     )
 
-    result = extract(raw)
+    result, _ = extract(raw)
 
     assert result.posted_at == posted_at
     assert result.source_id == "abc123"

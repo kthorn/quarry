@@ -16,7 +16,7 @@ from quarry.config import settings
 from quarry.crawlers import get_crawler
 from quarry.crawlers.base import Crawl404Error
 from quarry.crawlers.jobspy_client import JobSpyClient
-from quarry.models import Company, CrawlRun, JobPosting, RawPosting
+from quarry.models import Company, CrawlRun, JobPosting, ParseResult, RawPosting
 from quarry.pipeline.embedder import (
     embed_posting,
     get_ideal_embedding,
@@ -24,7 +24,11 @@ from quarry.pipeline.embedder import (
     set_ideal_embedding,
 )
 from quarry.pipeline.extract import extract
-from quarry.pipeline.filter import apply_keyword_blocklist, filter_posting
+from quarry.pipeline.filter import (
+    apply_keyword_blocklist,
+    apply_location_filter,
+    filter_posting,
+)
 from quarry.store.db import Database
 
 log = logging.getLogger(__name__)
@@ -105,18 +109,18 @@ def _process_posting(
     db: Database,
     blocklist: list[str],
     ideal_embedding: np.ndarray | None,
-) -> tuple[JobPosting | None, str, float]:
+) -> tuple[JobPosting | None, str, float, ParseResult | None]:
     """Process a single RawPosting through extract -> dedup -> embed -> filter.
 
-    Returns (JobPosting or None, status string, similarity_score).
-    Status is one of: "new", "duplicate", "duplicate_url", "blocklist", "low_similarity".
+    Returns (JobPosting or None, status string, similarity_score, ParseResult or None).
+    Status is one of: "new", "duplicate", "duplicate_url", "blocklist", "location", "low_similarity".
     """
-    posting = extract(raw)
+    posting, parse_result = extract(raw)
 
     if db.posting_exists(posting.company_id, posting.title_hash):
-        return None, "duplicate", 0.0
+        return None, "duplicate", 0.0, parse_result
     if db.posting_exists_by_url(posting.url):
-        return None, "duplicate_url", 0.0
+        return None, "duplicate_url", 0.0, parse_result
 
     if not apply_keyword_blocklist(raw, blocklist):
         similarity = 0.0
@@ -125,7 +129,23 @@ def _process_posting(
             norm_e = np.linalg.norm(emb)
             norm_i = np.linalg.norm(ideal_embedding)
             similarity = float(np.dot(emb, ideal_embedding) / (norm_e * norm_i + 1e-9))
-        return None, "blocklist", round(similarity, 4)
+        return None, "blocklist", round(similarity, 4), parse_result
+
+    loc_config = settings.location_filter
+    if loc_config:
+        passed_loc, loc_reason = apply_location_filter(
+            posting, parse_result, {"location_filter": dict(loc_config)}
+        )
+        if not passed_loc:
+            similarity = 0.0
+            if ideal_embedding is not None:
+                emb = embed_posting(raw)
+                norm_e = np.linalg.norm(emb)
+                norm_i = np.linalg.norm(ideal_embedding)
+                similarity = float(
+                    np.dot(emb, ideal_embedding) / (norm_e * norm_i + 1e-9)
+                )
+            return None, loc_reason or "location", round(similarity, 4), parse_result
 
     if ideal_embedding is None:
         similarity = 0.0
@@ -133,14 +153,19 @@ def _process_posting(
         result = filter_posting(raw, ideal_embedding, blocklist=blocklist)
         similarity = result.similarity_score or 0.0
         if not result.passed:
-            return None, result.skip_reason or "filtered", round(similarity, 4)
+            return (
+                None,
+                result.skip_reason or "filtered",
+                round(similarity, 4),
+                parse_result,
+            )
 
     posting.similarity_score = similarity
     if ideal_embedding is not None:
         emb = embed_posting(raw)
         posting.embedding = serialize_embedding(emb)
 
-    return posting, "new", round(similarity, 4)
+    return posting, "new", round(similarity, 4), parse_result
 
 
 def _resolve_company_id(raw: RawPosting, db: Database) -> int:
@@ -225,12 +250,16 @@ def run_once(db: Database) -> dict:
 
             company_new = 0
             for raw in postings:
-                job_posting, status, similarity = _process_posting(
+                job_posting, status, similarity, parse_result = _process_posting(
                     raw, db, blocklist, ideal_embedding
                 )
                 _log_posting(raw, status, similarity, company.name)
                 if status == "new" and job_posting:
-                    db.insert_posting(job_posting)
+                    posting_id = db.insert_posting(job_posting)
+                    if parse_result:
+                        for loc in parse_result.locations:
+                            loc_id = db.get_or_create_location(loc)
+                            db.link_posting_location(posting_id, loc_id)
                     company_new += 1
                     total_new += 1
                 elif status.startswith("duplicate"):
@@ -262,14 +291,18 @@ def run_once(db: Database) -> dict:
     total_found += len(search_postings)
 
     for raw in search_postings:
-        job_posting, status, similarity = _process_posting(
+        job_posting, status, similarity, parse_result = _process_posting(
             raw, db, blocklist, ideal_embedding
         )
         _log_posting(raw, status, similarity, "search")
         if status == "new" and job_posting:
             if not job_posting.company_id:
                 job_posting.company_id = _resolve_company_id(raw, db)
-            db.insert_posting(job_posting)
+            posting_id = db.insert_posting(job_posting)
+            if parse_result:
+                for loc in parse_result.locations:
+                    loc_id = db.get_or_create_location(loc)
+                    db.link_posting_location(posting_id, loc_id)
             total_new += 1
         elif status.startswith("duplicate"):
             total_duplicates += 1

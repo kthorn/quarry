@@ -37,7 +37,7 @@ def build_digest(db: Database, limit: int | None = None) -> list[dict]:
                 "url": p.url,
                 "similarity_score": p.similarity_score or 0.0,
                 "location": p.location or "N/A",
-                "remote": p.remote,
+                "work_model": p.work_model,
             }
         )
     return entries
@@ -62,9 +62,10 @@ def format_digest(entries: list[dict]) -> str:
     ]
 
     for i, e in enumerate(entries, 1):
-        remote_tag = " [Remote]" if e.get("remote") else ""
+        wm = e.get("work_model")
+        work_tag = f" [{wm.title()}]" if wm else ""
         score_tag = f" (score: {e['similarity_score']:.3f})"
-        lines.append(f"{i}. {e['title']} at {e['company_name']}{remote_tag}{score_tag}")
+        lines.append(f"{i}. {e['title']} at {e['company_name']}{work_tag}{score_tag}")
         lines.append(f"   {e['location']}")
         lines.append(f"   {e['url']}")
         lines.append("")

@@ -1,7 +1,29 @@
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel
+
+
+@dataclass
+class ParsedLocation:
+    canonical_name: str
+    city: str | None = None
+    state: str | None = None
+    state_code: str | None = None
+    country: str | None = None
+    country_code: str | None = None
+    region: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    resolution_status: str = "resolved"
+    raw_fragment: str | None = None
+
+
+@dataclass
+class ParseResult:
+    work_model: str | None = None
+    locations: list = field(default_factory=list)
 
 
 class Company(BaseModel):
@@ -29,7 +51,6 @@ class RawPosting(BaseModel):
     url: str
     description: str | None = None
     location: str | None = None
-    remote: bool | None = None
     posted_at: datetime | None = None
     source_id: str | None = None
     source_type: str
@@ -43,7 +64,7 @@ class JobPosting(BaseModel):
     url: str
     description: str | None = None
     location: str | None = None
-    remote: bool | None = None
+    work_model: str | None = None
     posted_at: datetime | None = None
     source_id: str | None = None
     source_type: str | None = None
@@ -123,7 +144,10 @@ class AgentAction(BaseModel):
 class FilterResult(BaseModel):
     posting: RawPosting
     passed: bool
-    skip_reason: Literal["duplicate", "blocklist", "low_similarity"] | None = None
+    skip_reason: (
+        Literal["duplicate", "duplicate_url", "blocklist", "low_similarity", "location"]
+        | None
+    ) = None
     similarity_score: float | None = None
 
 
@@ -144,3 +168,5 @@ class DigestEntry(BaseModel):
     similarity_score: float
     fit_reason: str
     location: str | None = None
+    work_model: str | None = None
+    location_names: list[str] = []

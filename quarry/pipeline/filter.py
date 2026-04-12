@@ -8,7 +8,7 @@ import logging
 
 import numpy as np
 
-from quarry.models import FilterResult, RawPosting
+from quarry.models import FilterResult, JobPosting, ParseResult, RawPosting
 from quarry.pipeline.embedder import embed_posting
 
 log = logging.getLogger(__name__)
@@ -129,3 +129,48 @@ def filter_posting(
         skip_reason=None,
         similarity_score=round(similarity, 4),
     )
+
+
+def apply_location_filter(
+    posting: JobPosting,
+    parse_result: ParseResult,
+    settings: dict | None = None,
+) -> tuple[bool, str | None]:
+    """Apply location filter to a posting using its ParseResult.
+
+    Args:
+        posting: JobPosting (for context).
+        parse_result: Parsed location data with work_model and locations.
+        settings: Dict with optional 'location_filter' key.
+
+    Returns:
+        Tuple of (passed: bool, skip_reason: str or None).
+    """
+    if settings is None:
+        return True, None
+
+    loc_config = settings.get("location_filter")
+    if loc_config is None:
+        return True, None
+
+    accept_remote = loc_config.get("accept_remote", False)
+    accept_nearby = loc_config.get("accept_nearby", False)
+    nearby_cities = [c.lower() for c in loc_config.get("nearby_cities", [])]
+    accept_regions = [r.lower() for r in loc_config.get("accept_regions", [])]
+
+    if accept_remote and parse_result.work_model == "remote":
+        return True, None
+
+    if not parse_result.locations:
+        return True, None
+
+    if accept_nearby:
+        for loc in parse_result.locations:
+            if loc.city and loc.city.lower() in nearby_cities:
+                return True, None
+            if loc.state_code and loc.state_code.lower() in nearby_cities:
+                return True, None
+            if loc.region and loc.region.lower() in accept_regions:
+                return True, None
+
+    return False, "location"

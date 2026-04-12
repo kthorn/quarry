@@ -43,8 +43,8 @@ class TestEndToEndPipeline:
             source_type="greenhouse",
         )
 
-        posting = extract(raw)
-        assert posting.remote is True
+        posting, _ = extract(raw)
+        assert posting.work_model in ("remote", "hybrid")
 
         result = filter_posting(raw, ideal_emb, threshold=0.3, blocklist=[])
         assert result.passed is True

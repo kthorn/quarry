@@ -21,7 +21,7 @@ def test_duplicate_posting_is_skipped(tmp_path):
         description="Great role",
         source_type="greenhouse",
     )
-    posting1 = extract(raw1)
+    posting1, _ = extract(raw1)
     db.insert_posting(posting1)
 
     # Try to insert duplicate (same URL)
@@ -32,7 +32,7 @@ def test_duplicate_posting_is_skipped(tmp_path):
         description="Great role",
         source_type="greenhouse",
     )
-    posting2 = extract(raw2)
+    posting2, _ = extract(raw2)
 
     # Check if exists before insert
     if not db.posting_exists_by_url(posting2.url):
@@ -61,7 +61,7 @@ def test_different_postings_are_both_inserted(tmp_path):
         url="https://example.com/job/123",
         source_type="greenhouse",
     )
-    posting1 = extract(raw1)
+    posting1, _ = extract(raw1)
     if not db.posting_exists_by_url(posting1.url):
         db.insert_posting(posting1)
 
@@ -72,7 +72,7 @@ def test_different_postings_are_both_inserted(tmp_path):
         url="https://example.com/job/456",
         source_type="greenhouse",
     )
-    posting2 = extract(raw2)
+    posting2, _ = extract(raw2)
     if not db.posting_exists_by_url(posting2.url):
         db.insert_posting(posting2)
 

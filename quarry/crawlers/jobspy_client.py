@@ -95,7 +95,6 @@ class JobSpyClient:
                 if row.get("description")
                 else None,
                 location=str(row.get("location")) if row.get("location") else None,
-                remote=self._parse_remote(row),
                 posted_at=row.get("date_posted"),
                 source_id=str(row.get("job_id", "")),
                 source_type=str(source_type),
@@ -103,13 +102,6 @@ class JobSpyClient:
             postings.append(posting)
 
         return postings
-
-    def _parse_remote(self, row: pd.Series) -> bool | None:
-        """Parse remote flag from job data."""
-        job_type = row.get("job_type", "")
-        if job_type and "remote" in str(job_type).lower():
-            return True
-        return None
 
     def _default_company_resolver(self, company_name: str) -> Company:
         """Default resolver returns Company with no ID."""

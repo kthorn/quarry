@@ -13,6 +13,7 @@ from quarry.pipeline.filter import (
     filter_posting,
     score_similarity,
 )
+from quarry.pipeline.locations import parse_location
 
 __all__ = [
     "embed_posting",
@@ -21,6 +22,7 @@ __all__ = [
     "get_ideal_embedding",
     "set_ideal_embedding",
     "extract",
+    "parse_location",
     "apply_keyword_blocklist",
     "filter_posting",
     "score_similarity",

@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS job_postings (
     url             TEXT NOT NULL,
     description     TEXT,
     location        TEXT,
-    remote          BOOLEAN,
+    work_model      TEXT,
     posted_at       TIMESTAMP,
     source_id       TEXT,
     source_type     TEXT,
@@ -50,6 +50,37 @@ CREATE TABLE IF NOT EXISTS job_postings (
 CREATE INDEX IF NOT EXISTS idx_postings_company ON job_postings(company_id);
 CREATE INDEX IF NOT EXISTS idx_postings_status ON job_postings(status);
 CREATE INDEX IF NOT EXISTS idx_postings_tier ON job_postings(role_tier);
+CREATE INDEX IF NOT EXISTS idx_postings_work_model ON job_postings(work_model);
+
+CREATE TABLE IF NOT EXISTS locations (
+    id              INTEGER PRIMARY KEY,
+    canonical_name  TEXT NOT NULL UNIQUE,
+    city            TEXT,
+    state           TEXT,
+    state_code      TEXT,
+    country         TEXT,
+    country_code    TEXT,
+    region          TEXT,
+    latitude        REAL,
+    longitude       REAL,
+    resolution_status TEXT NOT NULL DEFAULT 'resolved',
+    raw_fragment    TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_locations_canonical ON locations(canonical_name);
+CREATE INDEX IF NOT EXISTS idx_locations_country ON locations(country_code);
+CREATE INDEX IF NOT EXISTS idx_locations_region ON locations(region);
+CREATE INDEX IF NOT EXISTS idx_locations_city ON locations(city);
+CREATE INDEX IF NOT EXISTS idx_locations_state ON locations(state_code);
+
+CREATE TABLE IF NOT EXISTS job_posting_locations (
+    posting_id  INTEGER REFERENCES job_postings(id),
+    location_id INTEGER REFERENCES locations(id),
+    PRIMARY KEY (posting_id, location_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_jpl_posting ON job_posting_locations(posting_id);
+CREATE INDEX IF NOT EXISTS idx_jpl_location ON job_posting_locations(location_id);
 
 CREATE TABLE IF NOT EXISTS labels (
     id          INTEGER PRIMARY KEY,

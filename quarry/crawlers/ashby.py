@@ -78,9 +78,6 @@ class AshbyCrawler(BaseCrawler):
                     pass
 
             location = job.get("location", "")
-            is_remote = None
-            if location and "remote" in location.lower():
-                is_remote = True
 
             posting = RawPosting(
                 company_id=company_id,
@@ -88,7 +85,6 @@ class AshbyCrawler(BaseCrawler):
                 url=job.get("absoluteUrl", ""),
                 description=job.get("descriptionPlain"),
                 location=location,
-                remote=is_remote,
                 posted_at=posted_at,
                 source_id=job.get("id"),
                 source_type="ashby",
