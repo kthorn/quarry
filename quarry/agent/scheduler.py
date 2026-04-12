@@ -131,10 +131,20 @@ def _process_posting(
             similarity = float(np.dot(emb, ideal_embedding) / (norm_e * norm_i + 1e-9))
         return None, "blocklist", round(similarity, 4), parse_result
 
-    loc_config = settings.location_filter
+    filters = settings.filters
+    loc_config = filters.location_filter if filters else None
     if loc_config:
         passed_loc, loc_reason = apply_location_filter(
-            posting, parse_result, {"location_filter": dict(loc_config)}
+            posting,
+            parse_result,
+            {
+                "location_filter": {
+                    "accept_remote": loc_config.accept_remote,
+                    "accept_nearby": bool(loc_config.target_location),
+                    "nearby_cities": loc_config.target_location,
+                    "accept_regions": loc_config.accept_regions,
+                }
+            },
         )
         if not passed_loc:
             similarity = 0.0

@@ -2,7 +2,16 @@ import os
 
 os.environ["AWS_REGION"] = "us-west-2"  # Test env override
 
-from quarry.config import load_config
+import pytest
+
+from quarry.config import (
+    CompanyFilterConfig,
+    FiltersConfig,
+    KeywordBlocklistConfig,
+    LocationFilterConfig,
+    Settings,
+    load_config,
+)
 
 
 def test_load_config_from_yaml(tmp_path):
@@ -27,3 +36,55 @@ aws_region: yaml-region
     settings = load_config(config_file)
     # Env var should win
     assert settings.aws_region == "us-west-2"
+
+
+def test_empty_filters_config_passes():
+    config = FiltersConfig()
+    assert config.keyword_blocklist is None
+    assert config.company_filter is None
+    assert config.location_filter is None
+
+
+def test_keyword_blocklist_config_defaults():
+    config = KeywordBlocklistConfig()
+    assert config.keywords == []
+    assert config.passlist == []
+
+
+def test_company_filter_config_defaults():
+    config = CompanyFilterConfig()
+    assert config.allow == []
+    assert config.deny == []
+
+
+def test_location_filter_config_defaults():
+    config = LocationFilterConfig()
+    assert config.target_location == []
+    assert config.accept_remote is True
+    assert config.nearby_radius is None
+    assert config.accept_states == []
+    assert config.accept_regions == []
+
+
+def test_filters_config_normalize_empty():
+    config = FiltersConfig()
+    config.normalize_config()
+    assert config.location_filter is None
+
+
+def test_location_filter_normalize_config_resolves_cities():
+    config = LocationFilterConfig(
+        target_location=["San Francisco"],
+        accept_states=["CA"],
+        accept_regions=["US-West"],
+    )
+    config.normalize_config()
+    assert "san francisco" in config._resolved_cities
+    assert "ca" in config._resolved_states
+    assert "us-west" in config._resolved_regions
+
+
+def test_settings_rejects_unknown_keys():
+    """Verify extra='forbid' is set on Settings."""
+    with pytest.raises(Exception):
+        Settings(unknown_key="value")

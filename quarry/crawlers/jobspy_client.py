@@ -29,7 +29,7 @@ class JobSpyClient:
         self.sites = sites or settings.jobspy_sites
         self.results_wanted = results_wanted or settings.jobspy_results_wanted
         self.hours_old = hours_old or settings.jobspy_hours_old
-        self.location = location or settings.jobspy_location
+        self.location = location or ""
 
     def fetch(
         self,

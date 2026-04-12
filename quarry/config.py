@@ -2,14 +2,61 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
+from pydantic import BaseModel, PrivateAttr
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class KeywordBlocklistConfig(BaseModel):
+    keywords: list[str] = []
+    passlist: list[str] = []
+
+
+class CompanyFilterConfig(BaseModel):
+    allow: list[str] = []
+    deny: list[str] = []
+
+
+class LocationFilterConfig(BaseModel):
+    target_location: list[str] = []
+    accept_remote: bool = True
+    nearby_radius: int | None = None
+    accept_states: list[str] = []
+    accept_regions: list[str] = []
+
+    _resolved_cities: set[str] = PrivateAttr(default_factory=set)
+    _resolved_states: set[str] = PrivateAttr(default_factory=set)
+    _resolved_regions: set[str] = PrivateAttr(default_factory=set)
+
+    def normalize_config(self) -> None:
+        from quarry.pipeline.locations import parse_location
+
+        for entry in self.target_location:
+            result = parse_location(entry)
+            for loc in result.locations:
+                if loc.city:
+                    self._resolved_cities.add(loc.city.lower())
+                if loc.state_code:
+                    self._resolved_states.add(loc.state_code.lower())
+        for state in self.accept_states:
+            self._resolved_states.add(state.lower())
+        self._resolved_regions = {r.lower() for r in self.accept_regions}
+
+
+class FiltersConfig(BaseModel):
+    keyword_blocklist: KeywordBlocklistConfig | None = None
+    company_filter: CompanyFilterConfig | None = None
+    location_filter: LocationFilterConfig | None = None
+
+    def normalize_config(self) -> None:
+        if self.location_filter and self.location_filter.target_location:
+            self.location_filter.normalize_config()
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
-        extra="ignore",
+        extra="forbid",
     )
 
     # Core
@@ -59,7 +106,6 @@ class Settings(BaseSettings):
     ]
     jobspy_results_wanted: int = 20
     jobspy_hours_old: int = 168
-    jobspy_location: str = ""
 
     # Crawler behavior
     max_retries: int = 3
@@ -69,8 +115,8 @@ class Settings(BaseSettings):
     max_response_bytes: int = 1048576  # 1MB
     max_redirects: int = 5
 
-    # Location filter
-    location_filter: dict | None = None
+    # Filters
+    filters: FiltersConfig | None = None
 
 
 def load_config(config_path: Path | None = None) -> Settings:
@@ -106,7 +152,10 @@ def load_config(config_path: Path | None = None) -> Settings:
 
     # Merge: YAML values, then env overrides (which take precedence)
     combined = {**yaml_config, **env_overrides}
-    return Settings(**combined)
+    settings_obj = Settings(**combined)
+    if settings_obj.filters:
+        settings_obj.filters.normalize_config()
+    return settings_obj
 
 
 settings = load_config()
