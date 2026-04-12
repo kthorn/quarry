@@ -44,7 +44,6 @@ jobspy_sites:
   - linkedin
 jobspy_results_wanted: 20
 jobspy_hours_old: 168
-jobspy_location: ""  # optional: "Remote", "US", city name
 
 # === Crawler behavior ===
 max_retries: 3
@@ -54,13 +53,24 @@ request_timeout: 10
 max_response_bytes: 1048576  # 1MB
 max_redirects: 5
 
-# === Location filter ===
-# location_filter:
-#   user_location: "San Francisco, CA"
-#   accept_remote: true
-#   accept_nearby: true
-#   nearby_cities:
-#     - "San Francisco"
-#     - "Oakland"
-#   accept_regions:
-#     - "US-West"
+# === Filters ===
+# filters:
+#   keyword_blocklist:
+#     keywords:
+#       - "senior"
+#       - "principal"
+#     passlist:
+#       - "senior product"
+#   company_filter:
+#     deny:
+#       - "Talentify"
+#   location_filter:
+#     target_location:
+#       - "San Francisco"
+#       - "Oakland"
+#       - "San Jose"
+#     accept_remote: true
+#     accept_states:
+#       - "CA"
+#     accept_regions:
+#       - "US-West"
