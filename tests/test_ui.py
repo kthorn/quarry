@@ -1,5 +1,8 @@
+import pytest
+
 from quarry.models import AgentAction, Company, JobPosting, Label
-from quarry.store.db import init_db
+from quarry.store.db import Database, init_db
+from quarry.ui.app import create_app
 
 
 class TestGetPostingById:
@@ -281,3 +284,160 @@ class TestGetAgentActions:
             db.insert_agent_action(AgentAction(tool_name=f"tool_{i}"))
         actions = db.get_agent_actions(limit=5)
         assert len(actions) == 5
+
+
+@pytest.fixture
+def app(tmp_path):
+    db_path = str(tmp_path / "test.db")
+    init_db(db_path)
+    app = create_app(db_path=db_path)
+    app.config["TESTING"] = True
+    return app
+
+
+@pytest.fixture
+def client(app):
+    return app.test_client()
+
+
+@pytest.fixture
+def app_with_postings(app, tmp_path):
+    db = Database(tmp_path / "test.db")
+    company = Company(name="Acme Corp", ats_type="greenhouse", ats_slug="acme")
+    cid = db.insert_company(company)
+    for i in range(3):
+        posting = JobPosting(
+            company_id=cid,
+            title=f"Data Engineer {i}",
+            title_hash=f"hash_route_{i}",
+            url=f"https://acme.com/job/{i}",
+            description="Build data pipelines",
+            location="Remote, US",
+            work_model="remote",
+            similarity_score=0.75 - i * 0.1,
+            source_type="greenhouse",
+        )
+        db.insert_posting(posting)
+    return app
+
+
+class TestFlaskApp:
+    def test_create_app(self, app):
+        assert app is not None
+
+    def test_home_redirects_to_postings(self, client):
+        response = client.get("/")
+        assert response.status_code == 302
+
+
+class TestPostingsRoute:
+    def test_postings_page_renders(self, app_with_postings):
+        client = app_with_postings.test_client()
+        response = client.get("/postings")
+        assert response.status_code == 200
+        assert b"Data Engineer" in response.data
+
+    def test_postings_filtered_by_status(self, app_with_postings, tmp_path):
+        db = Database(tmp_path / "test.db")
+        postings = db.get_postings(limit=10)
+        db.update_posting_status(postings[0].id, "applied")
+        client = app_with_postings.test_client()
+        response = client.get("/postings?status=applied")
+        assert response.status_code == 200
+        assert b"Data Engineer 0" in response.data
+
+    def test_postings_empty(self, app):
+        client = app.test_client()
+        response = client.get("/postings")
+        assert response.status_code == 200
+        assert b"No postings" in response.data
+
+    def test_postings_invalid_status_defaults_to_new(self, app_with_postings):
+        client = app_with_postings.test_client()
+        response = client.get("/postings?status=invalid")
+        assert response.status_code == 200
+
+
+class TestLabelRoute:
+    def test_label_updates_status(self, app_with_postings, tmp_path):
+        db = Database(tmp_path / "test.db")
+        postings = db.get_postings(limit=10)
+        pid = postings[0].id
+        client = app_with_postings.test_client()
+        response = client.post(f"/label/{pid}", data={"status": "applied"})
+        assert response.status_code == 302
+        updated = db.get_posting_by_id(pid)
+        assert updated.status == "applied"
+
+    def test_label_creates_label_record(self, app_with_postings, tmp_path):
+        db = Database(tmp_path / "test.db")
+        postings = db.get_postings(limit=10)
+        pid = postings[0].id
+        client = app_with_postings.test_client()
+        client.post(f"/label/{pid}", data={"status": "applied", "notes": "Great fit"})
+        labels = db.get_labels_for_posting(pid)
+        assert len(labels) == 1
+        assert labels[0].signal == "applied"
+        assert labels[0].notes == "Great fit"
+
+    def test_label_rejects_invalid_status(self, app_with_postings, tmp_path):
+        db = Database(tmp_path / "test.db")
+        postings = db.get_postings(limit=10)
+        pid = postings[0].id
+        client = app_with_postings.test_client()
+        response = client.post(f"/label/{pid}", data={"status": "invalid"})
+        assert response.status_code == 400
+        updated = db.get_posting_by_id(pid)
+        assert updated.status == "new"
+
+
+class TestCompaniesRoute:
+    def test_companies_list(self, app, tmp_path):
+        db = Database(tmp_path / "test.db")
+        db.insert_company(
+            Company(name="Alpha", ats_type="greenhouse", ats_slug="alpha")
+        )
+        db.insert_company(
+            Company(name="Beta", ats_type="lever", ats_slug="beta", active=False)
+        )
+        client = app.test_client()
+        response = client.get("/companies")
+        assert response.status_code == 200
+        assert b"Alpha" in response.data
+        assert b"Beta" in response.data
+
+    def test_toggle_company(self, app, tmp_path):
+        db = Database(tmp_path / "test.db")
+        cid = db.insert_company(
+            Company(name="Gamma", ats_type="greenhouse", ats_slug="gamma")
+        )
+        assert db.get_company(cid).active is True
+        client = app.test_client()
+        response = client.post(f"/companies/{cid}/toggle")
+        assert response.status_code == 302
+        assert db.get_company(cid).active is False
+        client.post(f"/companies/{cid}/toggle")
+        assert db.get_company(cid).active is True
+
+
+class TestLogRoute:
+    def test_log_page_renders(self, app, tmp_path):
+        db = Database(tmp_path / "test.db")
+        db.insert_agent_action(
+            AgentAction(
+                run_id="r1",
+                tool_name="add_company",
+                tool_args='{"name": "Foo"}',
+                tool_result="Added",
+            )
+        )
+        client = app.test_client()
+        response = client.get("/log")
+        assert response.status_code == 200
+        assert b"add_company" in response.data
+
+    def test_log_empty(self, app):
+        client = app.test_client()
+        response = client.get("/log")
+        assert response.status_code == 200
+        assert b"No agent" in response.data

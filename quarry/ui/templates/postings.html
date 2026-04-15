@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}Postings — Quarry{% endblock %}
+{% block content %}
+<h1>Postings</h1>
+
+<div class="tabs">
+    {% for s in valid_statuses %}
+    <a href="{{ url_for('ui.postings', status=s) }}"
+       class="{{ 'active' if s == status else '' }}">
+        {{ s.capitalize() }}
+        <span class="count">({{ counts[s] }})</span>
+    </a>
+    {% endfor %}
+</div>
+
+{% if results %}
+    {% for posting, company_name in results %}
+    <div class="card">
+        <div class="card-title">
+            <a href="{{ posting.url }}">{{ posting.title }}</a>
+        </div>
+        <div class="card-meta">
+            {{ company_name }}
+            {% if posting.location %} &middot; {{ posting.location }}{% endif %}
+            {% if posting.work_model %}
+            <span class="badge badge-{{ posting.work_model }}">{{ posting.work_model }}</span>
+            {% endif %}
+            <span class="badge badge-{{ posting.status }}">{{ posting.status }}</span>
+        </div>
+        <div class="card-meta">
+            <span class="score">score: {{ "%.3f"|format(posting.similarity_score or 0) }}</span>
+        </div>
+        {% if posting.description %}
+        <details>
+            <summary>Description</summary>
+            <div class="description">{{ posting.description }}</div>
+        </details>
+        {% endif %}
+        <form method="POST" action="{{ url_for('ui.label', posting_id=posting.id) }}" class="inline">
+            <input type="hidden" name="status" value="applied">
+            <button type="submit" class="small btn-applied">Applied</button>
+        </form>
+        <form method="POST" action="{{ url_for('ui.label', posting_id=posting.id) }}" class="inline">
+            <input type="hidden" name="status" value="rejected">
+            <button type="submit" class="small btn-negative">Pass</button>
+        </form>
+        <form method="POST" action="{{ url_for('ui.label', posting_id=posting.id) }}" class="inline">
+            <input type="hidden" name="status" value="archived">
+            <button type="submit" class="small btn-archive">Archive</button>
+        </form>
+    </div>
+    {% endfor %}
+
+    <div class="pagination">
+        {% if page > 1 %}
+        <a href="{{ url_for('ui.postings', status=status, page=page-1) }}">&laquo; Prev</a>
+        {% endif %}
+        <span class="current">Page {{ page }}</span>
+        {% if has_next %}
+        <a href="{{ url_for('ui.postings', status=status, page=page+1) }}">Next &raquo;</a>
+        {% endif %}
+    </div>
+{% else %}
+    <p>No postings with status "{{ status }}" found.</p>
+{% endif %}
+{% endblock %}

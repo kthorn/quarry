@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Companies — Quarry{% endblock %}
+{% block content %}
+<h1>Company Watchlist</h1>
+
+<h2>Active ({{ active|length }})</h2>
+{% if active %}
+<table>
+    <thead>
+        <tr>
+            <th>Name</th>
+            <th>ATS</th>
+            <th>Domain</th>
+            <th>Careers URL</th>
+            <th>Action</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for company in active %}
+        <tr>
+            <td>{{ company.name }}</td>
+            <td>{{ company.ats_type }}</td>
+            <td>{{ company.domain or "\u2014" }}</td>
+            <td>{% if company.careers_url %}<a href="{{ company.careers_url }}">{{ company.careers_url }}</a>{% else %}\u2014{% endif %}</td>
+            <td>
+                <form method="POST" action="{{ url_for('ui.toggle_company', company_id=company.id) }}" class="inline">
+                    <button type="submit" class="small btn-negative">Deactivate</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p>No active companies.</p>
+{% endif %}
+
+<h2>Inactive ({{ inactive|length }})</h2>
+{% if inactive %}
+<table>
+    <thead>
+        <tr>
+            <th>Name</th>
+            <th>ATS</th>
+            <th>Domain</th>
+            <th>Action</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for company in inactive %}
+        <tr>
+            <td>{{ company.name }}</td>
+            <td>{{ company.ats_type }}</td>
+            <td>{{ company.domain or "\u2014" }}</td>
+            <td>
+                <form method="POST" action="{{ url_for('ui.toggle_company', company_id=company.id) }}" class="inline">
+                    <button type="submit" class="small btn-applied">Reactivate</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p>No inactive companies.</p>
+{% endif %}
+{% endblock %}

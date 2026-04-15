@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Agent Log — Quarry{% endblock %}
+{% block content %}
+<h1>Agent Log</h1>
+
+{% if actions %}
+<table>
+    <thead>
+        <tr>
+            <th>Time</th>
+            <th>Run ID</th>
+            <th>Tool</th>
+            <th>Args</th>
+            <th>Result</th>
+            <th>Rationale</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for action in actions %}
+        <tr>
+            <td>{{ action.created_at or "\u2014" }}</td>
+            <td>{{ action.run_id or "\u2014" }}</td>
+            <td>{{ action.tool_name }}</td>
+            <td><details>{% if action.tool_args %}<summary>Show</summary><pre>{{ action.tool_args }}</pre>{% else %}\u2014{% endif %}</details></td>
+            <td><details>{% if action.tool_result %}<summary>Show</summary><pre>{{ action.tool_result }}</pre>{% else %}\u2014{% endif %}</details></td>
+            <td>{{ action.rationale or "\u2014" }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p>No agent actions recorded yet.</p>
+{% endif %}
+{% endblock %}
