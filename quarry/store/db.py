@@ -420,6 +420,100 @@ class Database:
         rows = self.execute(sql, (region,))
         return [models.JobPosting(**dict(row)) for row in rows]
 
+    def get_postings_for_search(
+        self, status: str | None = None
+    ) -> list[tuple[models.JobPosting, str]]:
+        """Get all postings with embeddings, joined with company name.
+
+        Args:
+            status: If set, filter by posting status.
+
+        Returns:
+            List of (JobPosting, company_name) tuples for postings that have
+            embeddings stored.
+        """
+        sql = """
+            SELECT p.*, c.name as company_name
+            FROM job_postings p
+            JOIN companies c ON p.company_id = c.id
+            WHERE p.embedding IS NOT NULL
+        """
+        params: tuple = ()
+        if status:
+            sql += " AND p.status = ?"
+            params = (status,)
+        rows = self.execute(sql, params)
+        results = []
+        for row in rows:
+            row_dict = dict(row)
+            company_name = row_dict.pop("company_name")
+            posting = models.JobPosting(**row_dict)
+            results.append((posting, company_name))
+        return results
+
+    def get_posting_by_id(self, posting_id: int) -> models.JobPosting | None:
+        sql = "SELECT * FROM job_postings WHERE id = ?"
+        rows = self.execute(sql, (posting_id,))
+        if rows:
+            return models.JobPosting(**dict(rows[0]))
+        return None
+
+    def update_posting_status(self, posting_id: int, status: str) -> None:
+        sql = "UPDATE job_postings SET status = ? WHERE id = ?"
+        self.execute(sql, (status, posting_id))
+
+    def count_postings(self, status: str | None = None) -> int:
+        if status:
+            sql = "SELECT COUNT(*) as cnt FROM job_postings WHERE status = ?"
+            rows = self.execute(sql, (status,))
+        else:
+            sql = "SELECT COUNT(*) as cnt FROM job_postings"
+            rows = self.execute(sql)
+        return rows[0]["cnt"] if rows else 0
+
+    def get_postings_paginated(
+        self,
+        status: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+        threshold: float | None = None,
+    ) -> list[tuple[models.JobPosting, str]]:
+        sql = """
+            SELECT p.*, c.name as company_name
+            FROM job_postings p
+            JOIN companies c ON p.company_id = c.id
+        """
+        params: list = []
+        conditions: list[str] = []
+        if status:
+            conditions.append("p.status = ?")
+            params.append(status)
+        if threshold is not None:
+            conditions.append("p.similarity_score >= ?")
+            params.append(threshold)
+        if conditions:
+            sql += " WHERE " + " AND ".join(conditions)
+        sql += " ORDER BY p.similarity_score DESC LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+        rows = self.execute(sql, tuple(params))
+        results = []
+        for row in rows:
+            row_dict = dict(row)
+            company_name = row_dict.pop("company_name")
+            posting = models.JobPosting(**row_dict)
+            results.append((posting, company_name))
+        return results
+
+    def get_labels_for_posting(self, posting_id: int) -> list[models.Label]:
+        sql = "SELECT * FROM labels WHERE posting_id = ? ORDER BY labeled_at DESC"
+        rows = self.execute(sql, (posting_id,))
+        return [models.Label(**dict(row)) for row in rows]
+
+    def get_agent_actions(self, limit: int = 50) -> list[models.AgentAction]:
+        sql = "SELECT * FROM agent_actions ORDER BY created_at DESC LIMIT ?"
+        rows = self.execute(sql, (limit,))
+        return [models.AgentAction(**dict(row)) for row in rows]
+
     def get_setting(self, key: str) -> str | None:
         sql = "SELECT value FROM settings WHERE key = ?"
         rows = self.execute(sql, (key,))
