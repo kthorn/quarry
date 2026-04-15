@@ -61,6 +61,12 @@ max_redirects: 5
 #       - "principal"
 #     passlist:
 #       - "senior product"
+#   title_keyword:
+#     keywords:
+#       - "hr"
+#       - "people"
+#       - "analytics"
+#       - "workforce"
 #   company_filter:
 #     deny:
 #       - "Talentify"
@@ -74,3 +80,8 @@ max_redirects: 5
 #       - "CA"
 #     accept_regions:
 #       - "US-West"
+
+# === UI ===
+# ui_host: "127.0.0.1"
+# ui_port: 5000
+# ui_debug: false

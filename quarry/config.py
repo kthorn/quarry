@@ -11,6 +11,10 @@ class KeywordBlocklistConfig(BaseModel):
     passlist: list[str] = []
 
 
+class TitleKeywordConfig(BaseModel):
+    keywords: list[str] = []
+
+
 class CompanyFilterConfig(BaseModel):
     allow: list[str] = []
     deny: list[str] = []
@@ -26,6 +30,11 @@ class LocationFilterConfig(BaseModel):
     _resolved_cities: set[str] = PrivateAttr(default_factory=set)
     _resolved_states: set[str] = PrivateAttr(default_factory=set)
     _resolved_regions: set[str] = PrivateAttr(default_factory=set)
+    _resolved_target_coords: list[tuple[float, float]] = PrivateAttr(
+        default_factory=list
+    )
+    _resolved_states_from_accept: set[str] = PrivateAttr(default_factory=set)
+    _resolved_regions_from_accept: set[str] = PrivateAttr(default_factory=set)
 
     def normalize_config(self) -> None:
         from quarry.pipeline.locations import parse_location
@@ -37,18 +46,30 @@ class LocationFilterConfig(BaseModel):
                     self._resolved_cities.add(loc.city.lower())
                 if loc.state_code:
                     self._resolved_states.add(loc.state_code.lower())
-        for state in self.accept_states:
-            self._resolved_states.add(state.lower())
-        self._resolved_regions = {r.lower() for r in self.accept_regions}
+                if loc.latitude is not None and loc.longitude is not None:
+                    self._resolved_target_coords.append((loc.latitude, loc.longitude))
+        self._resolved_states_from_accept = {s.lower() for s in self.accept_states}
+        self._resolved_regions_from_accept = {r.lower() for r in self.accept_regions}
+        self._resolved_states.update(self._resolved_states_from_accept)
+        self._resolved_regions.update(self._resolved_regions_from_accept)
+        if self.nearby_radius and not self._resolved_target_coords:
+            raise ValueError(
+                "nearby_radius requires at least one target_location with resolvable coordinates"
+            )
 
 
 class FiltersConfig(BaseModel):
     keyword_blocklist: KeywordBlocklistConfig | None = None
+    title_keyword: TitleKeywordConfig | None = None
     company_filter: CompanyFilterConfig | None = None
     location_filter: LocationFilterConfig | None = None
 
     def normalize_config(self) -> None:
-        if self.location_filter and self.location_filter.target_location:
+        if self.location_filter and (
+            self.location_filter.target_location
+            or self.location_filter.accept_states
+            or self.location_filter.accept_regions
+        ):
             self.location_filter.normalize_config()
 
 
@@ -117,6 +138,11 @@ class Settings(BaseSettings):
 
     # Filters
     filters: FiltersConfig | None = None
+
+    # UI
+    ui_host: str = "127.0.0.1"
+    ui_port: int = 5000
+    ui_debug: bool = False
 
 
 def load_config(config_path: Path | None = None) -> Settings:
