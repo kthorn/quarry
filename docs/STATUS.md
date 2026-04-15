@@ -1,6 +1,6 @@
 # STATUS
 
-Last updated: 2026-04-12
+Last updated: 2026-04-14
 
 ## Phase 1 — MVP Progress
 
@@ -13,7 +13,7 @@ Last updated: 2026-04-12
 | M5: Agent tool loop & strategy reflection | **NOT STARTED** | — |
 | M6: Scheduler (run-once) | **DONE** (minimal) | 2026-04-10 |
 | M7: Daily digest | **DONE** (file output) | 2026-04-10 |
-| M8: Labeling UI | **NOT STARTED** | — |
+| M8: Labeling UI | **DONE** | 2026-04-14 |
 
 ## Additional Work (Beyond TASKS.md)
 
@@ -21,7 +21,9 @@ Last updated: 2026-04-12
 - **Company resolver pipeline** (`quarry/resolve/`): domain resolution, careers URL detection, ATS type detection, `add-company` CLI command
 - **Location filter design spec**: added to docs
 - **Location normalization**: structured location parsing with `quarry/pipeline/locations.py`, `work_model` replacing `remote` boolean, `locations` + `job_posting_locations` tables, geonamescache-based resolution, location filtering in pipeline
-- **Unified filter pipeline**: `FilterStep` protocol with `KeywordBlocklistFilter`, `CompanyFilter`, `LocationFilter` classes; `FiltersConfig` Pydantic models with typed config; similarity as soft gate (threshold applied at read time, not write time); `recompute-similarity` CLI command
+- **Unified filter pipeline**: `FilterStep` protocol with `KeywordBlocklistFilter`, `TitleKeywordFilter`, `CompanyFilter`, `LocationFilter` classes; `FiltersConfig` Pydantic models with typed config; similarity as soft gate (threshold applied at read time, not write time); `recompute-similarity` CLI command
+- **Title keyword filter**: positive-match filter requiring at least one keyword in the job title; configured via `filters.title_keyword.keywords`; rejects postings with no matching keyword (skip_reason: `title_keyword`); placed early in pipeline to avoid embedding compute on irrelevant postings from ATS board crawlers
+- **Location filter work_model fix**: `LocationFilter` now uses `posting.work_model` (authoritative post-extraction value) instead of `parse_result.work_model`; `accept_remote=True` now also passes postings with `work_model=None` (unknown work model treated as potentially remote)
 - **Crawl log CSV**: ATS crawler 404 handling, noisy log suppression
 - **RUNBOOK.md**: pre-execution checklist and operational guide
 
@@ -34,8 +36,9 @@ All refined plans in `docs/plans/completed/`:
 4. `2026-04-09-m4-embedding-similarity.md`
 5. `2026-04-10-scheduler-and-digest-minimal.md`
 6. `2026-04-10-seed-data.md`
-7. `2026-04-12-location-normalization.md` (in `docs/superpowers/plans/`)
-8. `2026-04-12-unified-filter-pipeline.md` (in `docs/superpowers/plans/`)
+7. `2026-04-11-company-resolver.md`
+8. `2026-04-12-location-normalization.md`
+10. `2026-04-14-m8-labeling-ui.md`
 
 ## Verification
 
@@ -45,39 +48,60 @@ All refined plans in `docs/plans/completed/`:
 - `python -m quarry.digest` — writes ranked digest file
 - `python -m quarry.agent.tools normalize-locations` — parse and normalize location data for existing postings
 - `python -m quarry.agent recompute-similarity` — recompute all similarity scores
-- `python -m pytest tests/` — **266 tests passing**
+- `python -m quarry.ui` — labeling UI (Flask)
+- `python -m pytest tests/` — **346 tests passing**
 - `ruff check .` — lint clean
 - `pyright quarry/` — type check clean
 
-## Next Steps
+## Remaining MVP Tasks (from TASKS.md)
 
-1. **M8: Web UI for controlling Quarry** — Browser-based interface to run crawls, view postings, label results, manage companies/queries, and trigger digests. Starts local; eventually deployed to EC2
-2. **M5: Agent tool loop & strategy reflection** — LLM-based agent that reads strategy state and makes tool calls (add/retire companies, queries)
-3. **Deploy to EC2** — Package for production deployment on an EC2 instance (systemd service, Quarry as reverse proxy, TLS)
-4. M6/M7 enhancements: APScheduler for automated scheduling, email/Slack digest delivery
+### M5: Agent tool loop & strategy reflection (NOT STARTED)
+- [ ] `agent/tools.py` — `get_strategy_summary()`, `get_recent_results(n)`, `retire_company()`, `update_company()`, `add_search_query()`, `retire_search_query()`, `log_observation()`, `trigger_retrain()`
+- [ ] `agent/prompts.py` — system prompt for reflection run with strategy summary template
+- [ ] `agent/agent.py` — `run_strategy_reflection()`: build context, call LLM with tools, execute tool calls in loop, log to `agent_log`
+- [x] `agent/tools.py` — `seed()` entrypoint (DONE)
+- [x] `seed_data.yaml` — initial company list (DONE, 29 companies)
+
+### M6: Scheduler enhancements (partial — run-once works)
+- [ ] APScheduler integration (`search_cycle`, `careers_crawl`, `strategy_reflection` jobs)
+- [ ] Log start/end/count to `agent_log` for each scheduled job
+- [ ] Graceful shutdown handling
+
+### M7: Daily digest enhancements (partial — file output works)
+- [ ] `send_digest()` — email (SMTP) and Slack webhook delivery
+- [ ] Digest scheduled daily (configurable time)
+
+### M8: Labeling UI (DONE)
+- [x] `ui/app.py` — Flask app factory (`create_app()`), single-user, no auth
+- [x] `GET /` — redirects to `/postings`
+- [x] `GET /postings` — list postings sorted by similarity, paginated, with status filter tabs (new/seen/applied/rejected/archived)
+- [x] `POST /label/<id>` — set status + create Label record
+- [x] `GET /companies` — view company watchlist with active/inactive toggle
+- [x] `GET /log` — recent agent_actions entries (read-only)
+- [x] HTML templates (Jinja2 + CSS, no JS framework): base, postings, companies, log
+- [x] Posting view: title, company, location, work_model badge, similarity score, description (collapsible), original link
+- [x] `python -m quarry.ui` CLI entrypoint with `--host`, `--port`, `--debug`
+- [x] DB helpers: `get_posting_by_id`, `update_posting_status`, `count_postings`, `get_postings_paginated`, `get_labels_for_posting`, `get_agent_actions`
+
+### Beyond MVP
+- Deploy to EC2 (systemd service, reverse proxy, TLS)
+- P2-1: Classifier training (logistic regression on embeddings, after ~50 labels)
+- P2-2: Auto-retrain trigger
+- P2-3: Classifier drift reflection
+- P3: Breadth expansion (LinkedIn/proxies, generic careers page, Google Jobs)
 
 ## Key Files
 
 ```
 quarry/
-├── agent/          scheduler, tools (seed, recompute-similarity), CLI
+├── agent/          scheduler, tools (seed, recompute-similarity, add-company, normalize-locations), CLI
 ├── crawlers/       greenhouse, lever, ashby, careers_page, jobspy_client
 ├── digest/         build + write digest file
-├── pipeline/       extract, embedder, filter (FilterStep classes), locations
+├── pipeline/       extract, embedder, filter (FilterStep classes: KeywordBlocklist, TitleKeyword, Company, Location), locations
 ├── resolve/        company resolver (domain, ATS detection)
 ├── store/          db.py, schema.sql
 ├── config.py       Settings (Pydantic + YAML), FiltersConfig models
 ├── models.py       Pydantic models, FilterDecision dataclass
-└── http.py         shared HTTP client
-```
-quarry/
-├── agent/          scheduler, tools (seed), CLI
-├── crawlers/       greenhouse, lever, ashby, careers_page, jobspy_client
-├── digest/         build + write digest file
-├── pipeline/       extract, embedder, filter, locations
-├── resolve/        company resolver (domain, ATS detection)
-├── store/          db.py, schema.sql
-├── config.py       Settings (Pydantic + YAML)
-├── models.py       Pydantic models
+├── ui/             Flask labeling UI (app, routes, templates, static)
 └── http.py         shared HTTP client
 ```
