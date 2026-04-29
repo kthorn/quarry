@@ -1,11 +1,46 @@
 """Tests for location parsing module."""
 
+import pytest
+
 from quarry.pipeline.locations import (
     extract_work_model,
+    haversine_miles,
     normalize_location_fragment,
     parse_location,
     split_compound_locations,
 )
+
+
+class TestHaversineMiles:
+    def test_same_point_returns_zero(self):
+        assert haversine_miles(37.7749, -122.4194, 37.7749, -122.4194) == pytest.approx(
+            0.0, abs=0.01
+        )
+
+    def test_sf_to_oakland(self):
+        distance = haversine_miles(37.7749, -122.4194, 37.8044, -122.2712)
+        assert 5 < distance < 15
+
+    def test_sf_to_la(self):
+        distance = haversine_miles(37.7749, -122.4194, 34.0522, -118.2437)
+        assert 340 < distance < 360
+
+    def test_none_lat1_returns_none(self):
+        assert haversine_miles(None, -122.4194, 37.8044, -122.2712) is None
+
+    def test_none_lon1_returns_none(self):
+        assert haversine_miles(37.7749, None, 37.8044, -122.2712) is None
+
+    def test_none_lat2_returns_none(self):
+        assert haversine_miles(37.7749, -122.4194, None, -122.2712) is None
+
+    def test_none_lon2_returns_none(self):
+        assert haversine_miles(37.7749, -122.4194, 37.8044, None) is None
+
+    def test_symmetric(self):
+        d1 = haversine_miles(37.7749, -122.4194, 34.0522, -118.2437)
+        d2 = haversine_miles(34.0522, -118.2437, 37.7749, -122.4194)
+        assert d1 == pytest.approx(d2, abs=0.01)
 
 
 class TestSplitCompoundLocations:

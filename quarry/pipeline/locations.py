@@ -7,6 +7,7 @@ This module handles:
 - Producing ParsedLocation with canonical names and region assignments
 """
 
+import math
 import re
 import unicodedata
 from functools import lru_cache
@@ -14,6 +15,30 @@ from functools import lru_cache
 import geonamescache
 
 from quarry.models import ParsedLocation, ParseResult
+
+_EARTH_RADIUS_MILES = 3958.8
+
+
+def haversine_miles(
+    lat1: float | None, lon1: float | None, lat2: float | None, lon2: float | None
+) -> float | None:
+    if lat1 is None or lon1 is None or lat2 is None or lon2 is None:
+        return None
+    lat1_r, lon1_r, lat2_r, lon2_r = (
+        math.radians(lat1),
+        math.radians(lon1),
+        math.radians(lat2),
+        math.radians(lon2),
+    )
+    dlat = lat2_r - lat1_r
+    dlon = lon2_r - lon1_r
+    a = (
+        math.sin(dlat / 2) ** 2
+        + math.cos(lat1_r) * math.cos(lat2_r) * math.sin(dlon / 2) ** 2
+    )
+    c = 2 * math.asin(math.sqrt(a))
+    return _EARTH_RADIUS_MILES * c
+
 
 US_STATE_REGIONS = {
     "AK": "US-West",

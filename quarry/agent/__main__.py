@@ -22,6 +22,7 @@ def _configure_logging():
     )
     for noisy in ("httpx", "httpcore", "transformers", "sentence_transformers"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
+    logging.getLogger("quarry.agent.scheduler").setLevel(logging.INFO)
 
 
 @click.group()

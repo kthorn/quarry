@@ -50,8 +50,9 @@ def _ensure_ideal_embedding(db: Database) -> None:
                 "ideal_role_description is empty - similarity scoring will use zero vector"
             )
             return
+        log.info("Computing ideal role embedding...")
         set_ideal_embedding(db, desc)
-        log.info("Computed and stored ideal role embedding")
+        log.info("Ideal role embedding stored")
 
 
 def _crawl_company(company: Company) -> list[RawPosting]:
@@ -171,10 +172,12 @@ def run_once(db: Database) -> dict:
     """
     _ensure_ideal_embedding(db)
     ideal_embedding = get_ideal_embedding(db)
+    if ideal_embedding is not None:
+        log.info("Ideal embedding loaded (dim=%d)", len(ideal_embedding))
     filters_config = settings.filters
 
     companies = db.get_all_companies(active_only=True)
-    log.info("Crawling %d active companies", len(companies))
+    log.info("Phase: crawling %d active companies", len(companies))
 
     total_found = 0
     total_new = 0
@@ -210,6 +213,12 @@ def run_once(db: Database) -> dict:
         )
 
     for company in companies:
+        log.info(
+            "[%d/%d] Crawling %s...",
+            companies_crawled + companies_errored + 1,
+            len(companies),
+            company.name,
+        )
         run = CrawlRun(
             company_id=company.id,
             started_at=datetime.now(timezone.utc),
@@ -225,6 +234,8 @@ def run_once(db: Database) -> dict:
             run.postings_found = len(postings)
 
             company_new = 0
+            company_dupes = 0
+            company_filtered = 0
             for raw in postings:
                 job_posting, status, similarity, parse_result = _process_posting(
                     raw, db, company.name, filters_config, ideal_embedding
@@ -244,12 +255,24 @@ def run_once(db: Database) -> dict:
                     company_new += 1
                     total_new += 1
                 elif status.startswith("duplicate"):
+                    company_dupes += 1
                     total_duplicates += 1
                 else:
+                    company_filtered += 1
                     total_filtered += 1
 
             run.postings_new = company_new
             run.status = "success"
+            log.info(
+                "[%d/%d] %s done: %d found, %d new, %d dupes, %d filtered",
+                companies_crawled + companies_errored,
+                len(companies),
+                company.name,
+                len(postings),
+                company_new,
+                company_dupes,
+                company_filtered,
+            )
         except Crawl404Error:
             log.warning("ATS 404 for %s — resetting ats_type to unknown", company.name)
             company.ats_type = "unknown"
@@ -270,6 +293,7 @@ def run_once(db: Database) -> dict:
 
     search_postings = _crawl_search_queries(db)
     total_found += len(search_postings)
+    log.info("Phase: processing %d search query results", len(search_postings))
 
     for raw in search_postings:
         company_name = ""

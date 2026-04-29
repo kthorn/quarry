@@ -7,6 +7,7 @@ from quarry.config import (
     CompanyFilterConfig,
     KeywordBlocklistConfig,
     LocationFilterConfig,
+    TitleKeywordConfig,
 )
 from quarry.models import (
     JobPosting,
@@ -19,6 +20,7 @@ from quarry.pipeline.filter import (
     CompanyFilter,
     KeywordBlocklistFilter,
     LocationFilter,
+    TitleKeywordFilter,
     cosine_similarity,
     score_similarity,
 )
@@ -173,6 +175,80 @@ class TestKeywordBlocklistFilter:
         assert config.keywords == []
 
 
+class TestTitleKeywordFilter:
+    def test_empty_keywords_passes_all(self):
+        config = TitleKeywordConfig()
+        filt = TitleKeywordFilter()
+        raw = _make_raw_posting(title="Senior Engineer")
+        posting = _make_posting()
+        parse_result = _make_parse_result()
+        decision = filt.check(raw, posting, parse_result, "Acme Corp", config)
+        assert decision.passed is True
+
+    def test_matching_title_passes(self):
+        config = TitleKeywordConfig(keywords=["hr", "people"])
+        filt = TitleKeywordFilter()
+        raw = _make_raw_posting(title="People Analytics Manager")
+        posting = _make_posting()
+        parse_result = _make_parse_result()
+        decision = filt.check(raw, posting, parse_result, "Acme Corp", config)
+        assert decision.passed is True
+
+    def test_non_matching_title_rejected(self):
+        config = TitleKeywordConfig(keywords=["hr", "people"])
+        filt = TitleKeywordFilter()
+        raw = _make_raw_posting(title="Senior Backend Engineer")
+        posting = _make_posting()
+        parse_result = _make_parse_result()
+        decision = filt.check(raw, posting, parse_result, "Acme Corp", config)
+        assert decision.passed is False
+        assert decision.skip_reason == "title_keyword"
+
+    def test_case_insensitive(self):
+        config = TitleKeywordConfig(keywords=["HR", "People"])
+        filt = TitleKeywordFilter()
+        raw = _make_raw_posting(title="hr business partner")
+        posting = _make_posting()
+        parse_result = _make_parse_result()
+        decision = filt.check(raw, posting, parse_result, "Acme Corp", config)
+        assert decision.passed is True
+
+    def test_partial_match_in_title(self):
+        config = TitleKeywordConfig(keywords=["analytics"])
+        filt = TitleKeywordFilter()
+        raw = _make_raw_posting(title="Workforce Analytics Lead")
+        posting = _make_posting()
+        parse_result = _make_parse_result()
+        decision = filt.check(raw, posting, parse_result, "Acme Corp", config)
+        assert decision.passed is True
+
+    def test_match_in_description_not_in_title_rejected(self):
+        config = TitleKeywordConfig(keywords=["hr", "people"])
+        filt = TitleKeywordFilter()
+        raw = _make_raw_posting(
+            title="Senior Backend Engineer",
+            description="Work with the People team on HR systems",
+        )
+        posting = _make_posting()
+        parse_result = _make_parse_result()
+        decision = filt.check(raw, posting, parse_result, "Acme Corp", config)
+        assert decision.passed is False
+
+    def test_any_keyword_match_passes(self):
+        config = TitleKeywordConfig(keywords=["hr", "people", "analytics", "workforce"])
+        filt = TitleKeywordFilter()
+        raw = _make_raw_posting(title="Workforce Planning Director")
+        posting = _make_posting()
+        parse_result = _make_parse_result()
+        decision = filt.check(raw, posting, parse_result, "Acme Corp", config)
+        assert decision.passed is True
+
+    def test_none_config_passes_all(self):
+        filt = TitleKeywordFilter()
+        config = filt.get_config(None)
+        assert config.keywords == []
+
+
 class TestCompanyFilter:
     def test_empty_allow_and_deny_passes(self):
         config = CompanyFilterConfig()
@@ -256,9 +332,31 @@ class TestLocationFilter:
         filt = LocationFilter()
         parse_result = ParseResult(work_model="remote", locations=[])
         raw = _make_raw_posting()
-        posting = _make_posting()
+        posting = _make_posting(work_model="remote")
         decision = filt.check(raw, posting, parse_result, "Acme Corp", config)
         assert decision.passed is True
+
+    def test_accept_remote_with_unknown_work_model_passes(self):
+        config = LocationFilterConfig(
+            target_location=["San Francisco"], accept_remote=True
+        )
+        filt = LocationFilter()
+        parse_result = ParseResult(work_model=None, locations=[])
+        raw = _make_raw_posting()
+        posting = _make_posting(work_model=None)
+        decision = filt.check(raw, posting, parse_result, "Acme Corp", config)
+        assert decision.passed is True
+
+    def test_reject_non_remote_unknown_when_no_match(self):
+        config = LocationFilterConfig(
+            target_location=["San Francisco"], accept_remote=False
+        )
+        config.normalize_config()
+        filt = LocationFilter()
+        raw = _make_raw_posting(location="New York, NY")
+        posting = _make_posting(location="New York, NY", work_model="onsite")
+        decision = filt.check(raw, posting, _nyc_result, "Acme Corp", config)
+        assert decision.passed is False
 
     def test_reject_non_remote_when_no_match(self):
         config = LocationFilterConfig(
@@ -325,11 +423,13 @@ class TestLocationFilter:
         assert decision.passed is True
 
     def test_non_matching_location_rejected(self):
-        config = LocationFilterConfig(target_location=["San Francisco"])
+        config = LocationFilterConfig(
+            target_location=["San Francisco"], accept_remote=False
+        )
         config.normalize_config()
         filt = LocationFilter()
         raw = _make_raw_posting()
-        posting = _make_posting()
+        posting = _make_posting(work_model="onsite")
         decision = filt.check(raw, posting, _nyc_result, "Acme Corp", config)
         assert decision.passed is False
         assert decision.skip_reason == "location"
@@ -344,10 +444,246 @@ class TestLocationFilter:
         decision = filt.check(raw, posting, parse_result, "Acme Corp", config)
         assert decision.passed is True
 
+    def test_state_match_with_city_does_not_pass(self):
+        config = LocationFilterConfig(
+            target_location=["San Francisco"], accept_remote=False
+        )
+        config.normalize_config()
+        filt = LocationFilter()
+        fresno_result = ParseResult(
+            work_model=None,
+            locations=[
+                ParsedLocation(
+                    canonical_name="Fresno, CA",
+                    city="Fresno",
+                    state_code="CA",
+                    region="US-West",
+                    latitude=36.7378,
+                    longitude=-119.7871,
+                )
+            ],
+        )
+        raw = _make_raw_posting()
+        posting = _make_posting(work_model="onsite")
+        decision = filt.check(raw, posting, fresno_result, "Acme Corp", config)
+        assert decision.passed is False
+
+    def test_state_match_without_city_passes(self):
+        config = LocationFilterConfig(target_location=[], accept_states=["CA"])
+        config.normalize_config()
+        filt = LocationFilter()
+        ca_state_result = ParseResult(
+            work_model=None,
+            locations=[
+                ParsedLocation(
+                    canonical_name="CA",
+                    state_code="CA",
+                    country="United States",
+                    country_code="US",
+                    region="US-West",
+                )
+            ],
+        )
+        raw = _make_raw_posting()
+        posting = _make_posting()
+        decision = filt.check(raw, posting, ca_state_result, "Acme Corp", config)
+        assert decision.passed is True
+
+    def test_region_match_with_city_does_not_pass(self):
+        config = LocationFilterConfig(
+            target_location=["San Francisco"], accept_remote=False
+        )
+        config.normalize_config()
+        filt = LocationFilter()
+        portland_result = ParseResult(
+            work_model=None,
+            locations=[
+                ParsedLocation(
+                    canonical_name="Portland, OR",
+                    city="Portland",
+                    state_code="OR",
+                    region="US-West",
+                )
+            ],
+        )
+        raw = _make_raw_posting()
+        posting = _make_posting(work_model="onsite")
+        decision = filt.check(raw, posting, portland_result, "Acme Corp", config)
+        assert decision.passed is False
+
+    def test_region_match_without_city_or_state_passes(self):
+        config = LocationFilterConfig(target_location=[], accept_regions=["US-West"])
+        config.normalize_config()
+        filt = LocationFilter()
+        us_west_result = ParseResult(
+            work_model=None,
+            locations=[
+                ParsedLocation(
+                    canonical_name="US-West",
+                    region="US-West",
+                )
+            ],
+        )
+        raw = _make_raw_posting()
+        posting = _make_posting()
+        decision = filt.check(raw, posting, us_west_result, "Acme Corp", config)
+        assert decision.passed is True
+
+
+class TestLocationFilterHaversine:
+    def test_nearby_city_passes_within_radius(self):
+        config = LocationFilterConfig(
+            target_location=["San Francisco, CA"], nearby_radius=50
+        )
+        config.normalize_config()
+        filt = LocationFilter()
+        oakland_result = ParseResult(
+            work_model=None,
+            locations=[
+                ParsedLocation(
+                    canonical_name="Oakland, CA",
+                    city="Oakland",
+                    state_code="CA",
+                    region="US-West",
+                    latitude=37.8044,
+                    longitude=-122.2712,
+                )
+            ],
+        )
+        raw = _make_raw_posting()
+        posting = _make_posting()
+        decision = filt.check(raw, posting, oakland_result, "Acme Corp", config)
+        assert decision.passed is True
+
+    def test_distant_city_fails_outside_radius(self):
+        config = LocationFilterConfig(
+            target_location=["San Francisco, CA"],
+            nearby_radius=50,
+            accept_remote=False,
+        )
+        config.normalize_config()
+        filt = LocationFilter()
+        la_result = ParseResult(
+            work_model=None,
+            locations=[
+                ParsedLocation(
+                    canonical_name="Los Angeles, CA",
+                    city="Los Angeles",
+                    state_code="CA",
+                    region="US-West",
+                    latitude=34.0522,
+                    longitude=-118.2437,
+                )
+            ],
+        )
+        raw = _make_raw_posting()
+        posting = _make_posting(work_model="onsite")
+        decision = filt.check(raw, posting, la_result, "Acme Corp", config)
+        assert decision.passed is False
+
+    def test_no_nearby_radius_behaves_as_before(self):
+        config = LocationFilterConfig(
+            target_location=["San Francisco, CA"], accept_remote=False
+        )
+        config.normalize_config()
+        filt = LocationFilter()
+        oakland_result = ParseResult(
+            work_model=None,
+            locations=[
+                ParsedLocation(
+                    canonical_name="Oakland, CA",
+                    city="Oakland",
+                    state_code="CA",
+                    region="US-West",
+                    latitude=37.8044,
+                    longitude=-122.2712,
+                )
+            ],
+        )
+        raw = _make_raw_posting()
+        posting = _make_posting(work_model="onsite")
+        decision = filt.check(raw, posting, oakland_result, "Acme Corp", config)
+        assert decision.passed is False
+
+    def test_missing_coordinates_skips_distance_check(self):
+        config = LocationFilterConfig(
+            target_location=["San Francisco, CA"],
+            nearby_radius=50,
+            accept_remote=False,
+        )
+        config.normalize_config()
+        filt = LocationFilter()
+        unresolved_result = ParseResult(
+            work_model=None,
+            locations=[
+                ParsedLocation(
+                    canonical_name="Oakland, CA",
+                    city="Oakland",
+                    state_code="CA",
+                    region="US-West",
+                    latitude=None,
+                    longitude=None,
+                )
+            ],
+        )
+        raw = _make_raw_posting()
+        posting = _make_posting(work_model="onsite")
+        decision = filt.check(raw, posting, unresolved_result, "Acme Corp", config)
+        assert decision.passed is False
+
+    def test_exact_city_match_still_passes_with_radius(self):
+        config = LocationFilterConfig(
+            target_location=["San Francisco, CA"], nearby_radius=50
+        )
+        config.normalize_config()
+        filt = LocationFilter()
+        sf_result = ParseResult(
+            work_model=None,
+            locations=[
+                ParsedLocation(
+                    canonical_name="San Francisco, CA",
+                    city="San Francisco",
+                    state_code="CA",
+                    region="US-West",
+                )
+            ],
+        )
+        raw = _make_raw_posting()
+        posting = _make_posting()
+        decision = filt.check(raw, posting, sf_result, "Acme Corp", config)
+        assert decision.passed is True
+
+    def test_nearby_with_zero_radius_ignores_distance(self):
+        config = LocationFilterConfig(
+            target_location=["San Francisco, CA"],
+            nearby_radius=0,
+            accept_remote=False,
+        )
+        config.normalize_config()
+        filt = LocationFilter()
+        oakland_result = ParseResult(
+            work_model=None,
+            locations=[
+                ParsedLocation(
+                    canonical_name="Oakland, CA",
+                    city="Oakland",
+                    state_code="CA",
+                    region="US-West",
+                    latitude=37.8044,
+                    longitude=-122.2712,
+                )
+            ],
+        )
+        raw = _make_raw_posting()
+        posting = _make_posting(work_model="onsite")
+        decision = filt.check(raw, posting, oakland_result, "Acme Corp", config)
+        assert decision.passed is False
+
 
 class TestFilterSteps:
     def test_filter_steps_list_exists(self):
-        assert len(FILTER_STEPS) == 3
+        assert len(FILTER_STEPS) == 4
         assert isinstance(FILTER_STEPS[0], KeywordBlocklistFilter)
-        assert isinstance(FILTER_STEPS[1], CompanyFilter)
-        assert isinstance(FILTER_STEPS[2], LocationFilter)
+        assert isinstance(FILTER_STEPS[1], TitleKeywordFilter)
+        assert isinstance(FILTER_STEPS[2], CompanyFilter)
+        assert isinstance(FILTER_STEPS[3], LocationFilter)

@@ -84,6 +84,23 @@ def test_location_filter_normalize_config_resolves_cities():
     assert "us-west" in config._resolved_regions
 
 
+def test_location_filter_normalize_config_resolves_target_coords():
+    config = LocationFilterConfig(target_location=["San Francisco"], nearby_radius=50)
+    config.normalize_config()
+    assert len(config._resolved_target_coords) >= 1
+    lat, lon = config._resolved_target_coords[0]
+    assert 37.7 < lat < 37.8
+    assert -122.5 < lon < -122.3
+
+
+def test_location_filter_nearby_radius_without_targets_raises():
+    config = LocationFilterConfig(
+        target_location=[], nearby_radius=50, accept_states=["CA"]
+    )
+    with pytest.raises(ValueError, match="nearby_radius"):
+        config.normalize_config()
+
+
 def test_settings_rejects_unknown_keys():
     """Verify extra='forbid' is set on Settings."""
     with pytest.raises(Exception):
