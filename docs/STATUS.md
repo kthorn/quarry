@@ -1,6 +1,6 @@
 # STATUS
 
-Last updated: 2026-04-14
+Last updated: 2026-04-28
 
 ## Phase 1 — MVP Progress
 
@@ -23,7 +23,10 @@ Last updated: 2026-04-14
 - **Location normalization**: structured location parsing with `quarry/pipeline/locations.py`, `work_model` replacing `remote` boolean, `locations` + `job_posting_locations` tables, geonamescache-based resolution, location filtering in pipeline
 - **Unified filter pipeline**: `FilterStep` protocol with `KeywordBlocklistFilter`, `TitleKeywordFilter`, `CompanyFilter`, `LocationFilter` classes; `FiltersConfig` Pydantic models with typed config; similarity as soft gate (threshold applied at read time, not write time); `recompute-similarity` CLI command
 - **Title keyword filter**: positive-match filter requiring at least one keyword in the job title; configured via `filters.title_keyword.keywords`; rejects postings with no matching keyword (skip_reason: `title_keyword`); placed early in pipeline to avoid embedding compute on irrelevant postings from ATS board crawlers
+- **Location filter: haversine distance matching**: `nearby_radius` config resolves target locations to lat/lon and accepts postings within radius; Oakland (12mi from SF) passes with 50mi radius, LA fails
+- **Location filter: accept_states / accept_regions**: broader geographic filters; postings with only a state or region code (no city) can pass when these are configured
 - **Location filter work_model fix**: `LocationFilter` now uses `posting.work_model` (authoritative post-extraction value) instead of `parse_result.work_model`; `accept_remote=True` now also passes postings with `work_model=None` (unknown work model treated as potentially remote)
+- **Search CLI** (`python -m quarry.pipeline search`): keyword filtering by title/description, similarity scoring against an ad-hoc ideal description, terminal table output via tabulate
 - **Crawl log CSV**: ATS crawler 404 handling, noisy log suppression
 - **RUNBOOK.md**: pre-execution checklist and operational guide
 
@@ -38,7 +41,10 @@ All refined plans in `docs/plans/completed/`:
 6. `2026-04-10-seed-data.md`
 7. `2026-04-11-company-resolver.md`
 8. `2026-04-12-location-normalization.md`
-10. `2026-04-14-m8-labeling-ui.md`
+9. `2026-04-11-company-resolver.md`
+10. `2026-04-12-haversine-location-matching-design.md`
+11. `2026-04-12-unified-filter-pipeline.md`
+12. `2026-04-14-m8-labeling-ui.md`
 
 ## Verification
 
@@ -49,7 +55,7 @@ All refined plans in `docs/plans/completed/`:
 - `python -m quarry.agent.tools normalize-locations` — parse and normalize location data for existing postings
 - `python -m quarry.agent recompute-similarity` — recompute all similarity scores
 - `python -m quarry.ui` — labeling UI (Flask)
-- `python -m pytest tests/` — **346 tests passing**
+- `python -m pytest tests/` — **346 tests passing** (as of 2026-04-28)
 - `ruff check .` — lint clean
 - `pyright quarry/` — type check clean
 
@@ -97,7 +103,7 @@ quarry/
 ├── agent/          scheduler, tools (seed, recompute-similarity, add-company, normalize-locations), CLI
 ├── crawlers/       greenhouse, lever, ashby, careers_page, jobspy_client
 ├── digest/         build + write digest file
-├── pipeline/       extract, embedder, filter (FilterStep classes: KeywordBlocklist, TitleKeyword, Company, Location), locations
+├── pipeline/       extract, embedder, filter (FilterStep classes), locations, search
 ├── resolve/        company resolver (domain, ATS detection)
 ├── store/          db.py, schema.sql
 ├── config.py       Settings (Pydantic + YAML), FiltersConfig models
