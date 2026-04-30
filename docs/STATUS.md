@@ -1,19 +1,19 @@
 # STATUS
 
-Last updated: 2026-04-28
+Last updated: 2026-04-29
 
 ## Phase 1 — MVP Progress
 
-| Milestone | Status | Completed Plan |
-|-----------|--------|----------------|
-| M1: Project scaffolding & database | **DONE** | 2026-04-05 |
-| M2: Crawlers (JobSpy + ATS endpoints) | **DONE** | 2026-04-06 |
-| M3: Extraction pipeline | **DONE** | 2026-04-07 |
-| M4: Embedding & similarity filter | **DONE** | 2026-04-09 |
-| M5: Agent tool loop & strategy reflection | **NOT STARTED** | — |
-| M6: Scheduler (run-once) | **DONE** (minimal) | 2026-04-10 |
-| M7: Daily digest | **DONE** (file output) | 2026-04-10 |
-| M8: Labeling UI | **DONE** | 2026-04-14 |
+| Milestone                                 | Status                 | Completed Plan |
+| ----------------------------------------- | ---------------------- | -------------- |
+| M1: Project scaffolding & database        | **DONE**               | 2026-04-05     |
+| M2: Crawlers (JobSpy + ATS endpoints)     | **DONE**               | 2026-04-06     |
+| M3: Extraction pipeline                   | **DONE**               | 2026-04-07     |
+| M4: Embedding & similarity filter         | **DONE**               | 2026-04-09     |
+| M5: Agent tool loop & strategy reflection | **NOT STARTED**        | —              |
+| M6: Scheduler (run-once)                  | **DONE** (minimal)     | 2026-04-10     |
+| M7: Daily digest                          | **DONE** (file output) | 2026-04-10     |
+| M8: Labeling UI                           | **DONE**               | 2026-04-14     |
 
 ## Additional Work (Beyond TASKS.md)
 
@@ -33,6 +33,7 @@ Last updated: 2026-04-28
 ## Completed Plans
 
 All refined plans in `docs/plans/completed/`:
+
 1. `2026-04-05-m1-project-scaffolding.md`
 2. `2026-04-06-m2-crawlers-implementation.md`
 3. `2026-04-07-extraction-pipeline.md`
@@ -45,6 +46,7 @@ All refined plans in `docs/plans/completed/`:
 10. `2026-04-12-haversine-location-matching-design.md`
 11. `2026-04-12-unified-filter-pipeline.md`
 12. `2026-04-14-m8-labeling-ui.md`
+13. **`2026-04-29-multi-user-schema.md`** (Phase 1 of 4: DDL) — schema rewritten with per-user tables; 28 schema tests passing; old `quarry.db` replaced; schema documentation at `docs/multi-user-schema.md`
 
 ## Verification
 
@@ -55,13 +57,15 @@ All refined plans in `docs/plans/completed/`:
 - `python -m quarry.agent.tools normalize-locations` — parse and normalize location data for existing postings
 - `python -m quarry.agent recompute-similarity` — recompute all similarity scores
 - `python -m quarry.ui` — labeling UI (Flask)
-- `python -m pytest tests/` — **346 tests passing** (as of 2026-04-28)
+- `python -m pytest tests/test_db.py -v` — **28 schema tests passing** (2026-04-29)
+- **Note:** Other test files and application code are broken pending Phase 2–4 ORM/CRUD/caller updates
 - `ruff check .` — lint clean
 - `pyright quarry/` — type check clean
 
 ## Remaining MVP Tasks (from TASKS.md)
 
 ### M5: Agent tool loop & strategy reflection (NOT STARTED)
+
 - [ ] `agent/tools.py` — `get_strategy_summary()`, `get_recent_results(n)`, `retire_company()`, `update_company()`, `add_search_query()`, `retire_search_query()`, `log_observation()`, `trigger_retrain()`
 - [ ] `agent/prompts.py` — system prompt for reflection run with strategy summary template
 - [ ] `agent/agent.py` — `run_strategy_reflection()`: build context, call LLM with tools, execute tool calls in loop, log to `agent_log`
@@ -69,15 +73,18 @@ All refined plans in `docs/plans/completed/`:
 - [x] `seed_data.yaml` — initial company list (DONE, 29 companies)
 
 ### M6: Scheduler enhancements (partial — run-once works)
+
 - [ ] APScheduler integration (`search_cycle`, `careers_crawl`, `strategy_reflection` jobs)
 - [ ] Log start/end/count to `agent_log` for each scheduled job
 - [ ] Graceful shutdown handling
 
 ### M7: Daily digest enhancements (partial — file output works)
+
 - [ ] `send_digest()` — email (SMTP) and Slack webhook delivery
 - [ ] Digest scheduled daily (configurable time)
 
 ### M8: Labeling UI (DONE)
+
 - [x] `ui/app.py` — Flask app factory (`create_app()`), single-user, no auth
 - [x] `GET /` — redirects to `/postings`
 - [x] `GET /postings` — list postings sorted by similarity, paginated, with status filter tabs (new/seen/applied/rejected/archived)
@@ -90,11 +97,23 @@ All refined plans in `docs/plans/completed/`:
 - [x] DB helpers: `get_posting_by_id`, `update_posting_status`, `count_postings`, `get_postings_paginated`, `get_labels_for_posting`, `get_agent_actions`
 
 ### Beyond MVP
+
 - Deploy to EC2 (systemd service, reverse proxy, TLS)
 - P2-1: Classifier training (logistic regression on embeddings, after ~50 labels)
 - P2-2: Auto-retrain trigger
 - P2-3: Classifier drift reflection
 - P3: Breadth expansion (LinkedIn/proxies, generic careers page, Google Jobs)
+
+## Multi-User Architecture (Phased)
+
+| Phase                                 | Status      | Document                                                       |
+| ------------------------------------- | ----------- | -------------------------------------------------------------- |
+| Phase 1: DDL schema                   | **DONE**    | `docs/superpowers/plans/2026-04-29-multi-user-schema.md`       |
+| Phase 2: SQLAlchemy 2.0 ORM + Alembic | Not started | `docs/superpowers/plans/2026-04-29-multi-user-architecture.md` |
+| Phase 3: CRUD rewrite                 | Not started | `docs/superpowers/plans/2026-04-29-multi-user-architecture.md` |
+| Phase 4: Caller updates               | Not started | `docs/superpowers/plans/2026-04-29-multi-user-architecture.md` |
+
+Schema documentation: `docs/multi-user-schema.md` (includes ERD)
 
 ## Key Files
 
@@ -105,7 +124,7 @@ quarry/
 ├── digest/         build + write digest file
 ├── pipeline/       extract, embedder, filter (FilterStep classes), locations, search
 ├── resolve/        company resolver (domain, ATS detection)
-├── store/          db.py, schema.sql
+├── store/          db.py, schema.py
 ├── config.py       Settings (Pydantic + YAML), FiltersConfig models
 ├── models.py       Pydantic models, FilterDecision dataclass
 ├── ui/             Flask labeling UI (app, routes, templates, static)

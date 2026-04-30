@@ -88,25 +88,6 @@ class Database:
         rows = self.execute(sql, (status,))
         return [models.Company(**dict(row)) for row in rows]
 
-    def migrate_resolve_columns(self) -> None:
-        with self.get_connection() as conn:
-            existing = {
-                row[1]
-                for row in conn.execute("PRAGMA table_info(companies)").fetchall()
-            }
-            if "resolve_status" not in existing:
-                conn.execute(
-                    "ALTER TABLE companies ADD COLUMN resolve_status TEXT DEFAULT 'unresolved'"
-                )
-            if "resolve_attempts" not in existing:
-                conn.execute(
-                    "ALTER TABLE companies ADD COLUMN resolve_attempts INTEGER DEFAULT 0"
-                )
-            conn.execute(
-                "UPDATE companies SET resolve_status = 'resolved' "
-                "WHERE domain IS NOT NULL AND careers_url IS NOT NULL AND ats_type != 'unknown'"
-            )
-
     def update_company(self, company: models.Company) -> None:
         sql = """
             UPDATE companies SET name=?, domain=?, careers_url=?, ats_type=?,
@@ -535,8 +516,6 @@ def init_db(db_path: str | Path) -> Database:
 
     with db.get_connection() as conn:
         conn.executescript(SCHEMA_SQL)
-
-    db.migrate_resolve_columns()
 
     return db
 
