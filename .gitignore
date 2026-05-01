@@ -74,3 +74,6 @@ quarry.db
 *.log
 config.yaml
 digest_*.txt
+
+# Git worktree isolation
+.worktrees/
