@@ -57,10 +57,11 @@ All refined plans in `docs/plans/completed/`:
 - `python -m quarry.agent.tools normalize-locations` — parse and normalize location data for existing postings
 - `python -m quarry.agent recompute-similarity` — recompute all similarity scores
 - `python -m quarry.ui` — labeling UI (Flask)
-- `python -m pytest tests/test_db.py -v` — **28 schema tests passing** (2026-04-29)
-- **Note:** Other test files and application code are broken pending Phase 2–4 ORM/CRUD/caller updates
-- `ruff check .` — lint clean
-- `pyright quarry/` — type check clean
+- `python -m pytest tests/test_db.py -v` — **28 schema tests passing** (all green)
+- `python -m pytest tests/test_orm.py -v` — **17 ORM tests passing** (Phase 2)
+- `ruff check .` — clean
+- `pyright quarry/store/models.py quarry/store/session.py quarry/store/db.py tests/test_orm.py` — clean
+- **Note:** CRUD-dependent tests (test_ui.py, test_seed.py, test_m4_integration.py, etc.) are broken pending Phase 3 CRUD rewrite. The `db.py` raw-SQL methods still target pre-Phase-1 schema.
 
 ## Remaining MVP Tasks (from TASKS.md)
 

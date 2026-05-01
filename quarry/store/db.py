@@ -1,10 +1,9 @@
 import sqlite3
+from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Generator
 
 import quarry.models as models
-from quarry.store.schema import SCHEMA_SQL
 
 
 class Database:
@@ -510,14 +509,33 @@ class Database:
 
 
 def init_db(db_path: str | Path) -> Database:
-    """Initialize database with schema."""
+    """Initialize database with schema (SQLAlchemy ORM).
+
+    Creates tables via Base.metadata.create_all and seeds the default
+    user if not already present.  Returns the legacy Database wrapper
+    for backward compatibility with existing raw-SQL code paths.
+    """
     db_path = Path(db_path)
-    db = Database(db_path)
 
-    with db.get_connection() as conn:
-        conn.executescript(SCHEMA_SQL)
+    from quarry.store.models import Base
+    from quarry.store.session import get_engine, session_scope
 
-    return db
+    engine = get_engine(db_path)
+    Base.metadata.create_all(engine, checkfirst=True)
+
+    # Seed default user for single-user backward compat.
+    with session_scope(engine=engine) as session:
+        from sqlalchemy import select
+
+        from quarry.store.models import User
+
+        existing = session.execute(
+            select(User).where(User.id == 1)
+        ).scalar_one_or_none()
+        if existing is None:
+            session.add(User(id=1, email="default@local", name="Default User"))
+
+    return Database(db_path)
 
 
 def get_db() -> Database:
