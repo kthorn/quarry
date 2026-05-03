@@ -58,7 +58,9 @@ class TestRunOnce:
             assert summary["total_found"] >= 1
             postings = seeded_db.get_postings()
             assert len(postings) >= 1
-            assert postings[0].similarity_score is not None
+            # similarity_score is now on user_similarity_scores, not JobPosting
+            rows = seeded_db.get_postings_with_scores(status="new", limit=10)
+            assert any(r["similarity_score"] is not None for r in rows)
 
     def test_run_once_skips_duplicates(self, seeded_db):
         mock_postings = [_make_raw_posting()]
@@ -92,8 +94,14 @@ class TestRunOnce:
 
             run_once(seeded_db)
 
-            runs = seeded_db.execute("SELECT * FROM crawl_runs")
-            assert len(runs) >= 1
+            from quarry.store.models import CrawlRun as ORMCrawlRun
+            from quarry.store.session import session_scope
+
+            with session_scope(engine=seeded_db.engine) as session:
+                from sqlalchemy import select as sa_select
+
+                runs = session.execute(sa_select(ORMCrawlRun)).scalars().all()
+                assert len(runs) >= 1
 
 
 class TestProcessPosting:

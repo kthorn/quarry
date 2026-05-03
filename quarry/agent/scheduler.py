@@ -40,9 +40,9 @@ CRAWL_LOG_COLUMNS = [
 ]
 
 
-def _ensure_ideal_embedding(db: Database) -> None:
+def _ensure_ideal_embedding(db: Database, user_id: int = 1) -> None:
     """Ensure ideal role embedding exists in DB. Compute from config if missing."""
-    ideal = get_ideal_embedding(db)
+    ideal = get_ideal_embedding(db, user_id)
     if ideal is None:
         desc = settings.ideal_role_description
         if not desc:
@@ -50,9 +50,9 @@ def _ensure_ideal_embedding(db: Database) -> None:
                 "ideal_role_description is empty - similarity scoring will use zero vector"
             )
             return
-        log.info("Computing ideal role embedding...")
-        set_ideal_embedding(db, desc)
-        log.info("Ideal role embedding stored")
+        log.info("Computing ideal role embedding for user %d...", user_id)
+        set_ideal_embedding(db, desc, user_id)
+        log.info("Ideal role embedding stored for user %d", user_id)
 
 
 def _crawl_company(company: Company) -> list[RawPosting]:
@@ -66,10 +66,10 @@ def _crawl_company(company: Company) -> list[RawPosting]:
     return result
 
 
-def _crawl_search_queries(db: Database) -> list[RawPosting]:
+def _crawl_search_queries(db: Database, user_id: int = 1) -> list[RawPosting]:
     """Crawl job boards for all active search queries via JobSpy."""
     client = JobSpyClient()
-    queries = db.get_active_search_queries()
+    queries = db.get_active_search_queries(user_id=user_id)
     if not queries:
         log.info("No active search queries found")
         return []
@@ -85,8 +85,8 @@ def _crawl_search_queries(db: Database) -> list[RawPosting]:
         lower = name.lower()
         if lower in seen_companies:
             return seen_companies[lower]
-        new_company = Company(name=name, active=True)
-        new_company.id = db.insert_company(new_company)
+        new_company = Company(name=name)
+        new_company.id = db.insert_company(new_company, user_id=user_id)
         seen_companies[lower] = new_company
         return new_company
 
@@ -108,10 +108,14 @@ def _process_posting(
     company_name: str,
     filters_config: FiltersConfig | None,
     ideal_embedding: np.ndarray | None,
+    user_id: int = 1,
 ) -> tuple[JobPosting | None, str, float, ParseResult | None]:
     """Process a single RawPosting through extract -> dedup -> filter -> embed.
 
     Returns (JobPosting or None, status string, similarity_score, ParseResult or None).
+
+    Note: user_id is present for symmetry but not used inside the function;
+    similarity writes happen in the caller via db.update_posting_similarity.
     """
     posting, parse_result = extract(raw)
 
@@ -134,7 +138,6 @@ def _process_posting(
             np.dot(embedding, ideal_embedding)
             / (np.linalg.norm(embedding) * np.linalg.norm(ideal_embedding) + 1e-9)
         )
-        posting.similarity_score = round(similarity, 4)
         posting.embedding = serialize_embedding(embedding)
 
     return posting, "new", round(similarity, 4), parse_result
@@ -160,18 +163,18 @@ def _resolve_company_id(raw: RawPosting, db: Database) -> int:
     if not company_name:
         company_name = "Unknown"
 
-    new_company = Company(name=company_name, active=True)
+    new_company = Company(name=company_name)
     return db.insert_company(new_company)
 
 
-def run_once(db: Database) -> dict:
+def run_once(db: Database, user_id: int = 1) -> dict:
     """Run a single crawl cycle: crawl all companies + search queries, process, store.
 
     Returns a summary dict with counts. Also writes a CSV crawl log with every
     posting found and its similarity score.
     """
-    _ensure_ideal_embedding(db)
-    ideal_embedding = get_ideal_embedding(db)
+    _ensure_ideal_embedding(db, user_id)
+    ideal_embedding = get_ideal_embedding(db, user_id)
     if ideal_embedding is not None:
         log.info("Ideal embedding loaded (dim=%d)", len(ideal_embedding))
     filters_config = settings.filters
@@ -238,7 +241,12 @@ def run_once(db: Database) -> dict:
             company_filtered = 0
             for raw in postings:
                 job_posting, status, similarity, parse_result = _process_posting(
-                    raw, db, company.name, filters_config, ideal_embedding
+                    raw,
+                    db,
+                    company.name,
+                    filters_config,
+                    ideal_embedding,
+                    user_id=user_id,
                 )
                 skip_reason = (
                     status
@@ -247,7 +255,11 @@ def run_once(db: Database) -> dict:
                 )
                 _log_posting(raw, status, similarity, company.name, skip_reason)
                 if status == "new" and job_posting:
-                    posting_id = db.insert_posting(job_posting)
+                    posting_id = db.insert_posting(job_posting, user_id=user_id)
+                    if similarity and similarity > 0:
+                        db.update_posting_similarity(
+                            posting_id, round(similarity, 4), user_id=user_id
+                        )
                     if parse_result:
                         for loc in parse_result.locations:
                             loc_id = db.get_or_create_location(loc)
@@ -291,7 +303,7 @@ def run_once(db: Database) -> dict:
 
         db.insert_crawl_run(run)
 
-    search_postings = _crawl_search_queries(db)
+    search_postings = _crawl_search_queries(db, user_id=user_id)
     total_found += len(search_postings)
     log.info("Phase: processing %d search query results", len(search_postings))
 
@@ -301,7 +313,12 @@ def run_once(db: Database) -> dict:
             company_name = raw.title.split(" at ")[-1].strip()
 
         job_posting, status, similarity, parse_result = _process_posting(
-            raw, db, company_name, filters_config, ideal_embedding
+            raw,
+            db,
+            company_name,
+            filters_config,
+            ideal_embedding,
+            user_id=user_id,
         )
         skip_reason = (
             status if status not in ("new", "duplicate", "duplicate_url") else None
@@ -310,7 +327,11 @@ def run_once(db: Database) -> dict:
         if status == "new" and job_posting:
             if not job_posting.company_id:
                 job_posting.company_id = _resolve_company_id(raw, db)
-            posting_id = db.insert_posting(job_posting)
+            posting_id = db.insert_posting(job_posting, user_id=user_id)
+            if similarity and similarity > 0:
+                db.update_posting_similarity(
+                    posting_id, round(similarity, 4), user_id=user_id
+                )
             if parse_result:
                 for loc in parse_result.locations:
                     loc_id = db.get_or_create_location(loc)

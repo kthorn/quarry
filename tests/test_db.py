@@ -13,7 +13,8 @@ import sqlite3
 
 import pytest
 
-from quarry.store.db import init_db
+from quarry import models
+from quarry.store.db import Database, init_db
 
 # ── Table creation ──────────────────────────────────────────────
 
@@ -779,3 +780,497 @@ def test_job_postings_company_id_not_null(tmp_path):
         )
 
     conn.close()
+
+
+# ════════════════════════════════════════════════════════════════
+# Phase 3 CRUD Integration Tests
+# ════════════════════════════════════════════════════════════════
+
+
+@pytest.fixture
+def db_path(tmp_path):
+    """Return a fresh temp DB path (DB not yet created)."""
+    return tmp_path / "test.db"
+
+
+@pytest.fixture
+def db(db_path):
+    """Create a fresh DB with schema + default user, return Database instance."""
+    init_db(db_path)
+    return Database(db_path)
+
+
+def _raw(db_path_v):
+    """Open a raw sqlite3 connection on the test DB.
+
+    NOTE: This bypasses the engine's FK enforcement pragma listener registered
+    in quarry/store/session.py. Raw sqlite3 connections do NOT enforce foreign
+    keys by default. This is intentional — it allows cross-user data setup
+    (inserting data for user_id=2 without a users row) in isolation tests.
+    """
+    conn = sqlite3.connect(str(db_path_v))
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+# ── Company CRUD ────────────────────────────────────────────────
+
+
+def test_insert_and_get_company(db):
+    company = models.Company(name="TestCo", domain="testco.com")
+    cid = db.insert_company(company)
+    assert cid > 0
+
+    fetched = db.get_company(cid)
+    assert fetched is not None
+    assert fetched.name == "TestCo"
+    assert fetched.domain == "testco.com"
+
+
+def test_insert_company_creates_watchlist(db, db_path):
+    cid = db.insert_company(models.Company(name="Acme"))
+    conn = _raw(db_path)
+    row = conn.execute(
+        "SELECT * FROM user_watchlist WHERE user_id = 1 AND company_id = ?", (cid,)
+    ).fetchone()
+    conn.close()
+    assert row is not None
+    assert row["active"] == 1
+
+
+def test_get_all_companies_active_only(db, db_path):
+    db.insert_company(models.Company(name="ActiveCo"))
+    cid2 = db.insert_company(models.Company(name="InactiveCo"))
+    # Deactivate via raw sqlite3
+    conn = _raw(db_path)
+    conn.execute(
+        "UPDATE user_watchlist SET active = 0 WHERE company_id = ? AND user_id = 1",
+        (cid2,),
+    )
+    conn.commit()
+    conn.close()
+
+    active = db.get_all_companies(active_only=True)
+    assert len(active) == 1
+    assert active[0].name == "ActiveCo"
+
+
+def test_get_all_companies_unfiltered(db):
+    db.insert_company(models.Company(name="A"))
+    db.insert_company(models.Company(name="B"))
+    all_co = db.get_all_companies(active_only=False)
+    assert len(all_co) == 2
+
+
+def test_get_company_by_name(db):
+    db.insert_company(models.Company(name="UniqueCorp"))
+    found = db.get_company_by_name("UniqueCorp")
+    assert found is not None
+    assert found.name == "UniqueCorp"
+    assert db.get_company_by_name("Nonexistent") is None
+
+
+def test_get_companies_by_resolve_status(db):
+    db.insert_company(models.Company(name="UnresolvedCo", resolve_status="unresolved"))
+    db.insert_company(models.Company(name="ResolvedCo", resolve_status="resolved"))
+
+    unresolved = db.get_companies_by_resolve_status("unresolved")
+    assert len(unresolved) == 1
+    assert unresolved[0].name == "UnresolvedCo"
+
+
+def test_update_company(db):
+    cid = db.insert_company(models.Company(name="Before"))
+    company = db.get_company(cid)
+    assert company is not None
+    company.name = "After"
+    company.domain = "after.com"
+    db.update_company(company)
+
+    updated = db.get_company(cid)
+    assert updated is not None
+    assert updated.name == "After"
+    assert updated.domain == "after.com"
+
+
+# ── Posting CRUD ───────────────────────────────────────────────
+
+
+def test_insert_and_get_posting(db):
+    cid = db.insert_company(models.Company(name="Acme"))
+    posting = models.JobPosting(
+        company_id=cid,
+        title="Engineer",
+        title_hash="abc123",
+        url="http://example.com/job/1",
+    )
+    pid = db.insert_posting(posting)
+    assert pid > 0
+
+    fetched = db.get_posting_by_id(pid)
+    assert fetched is not None
+    assert fetched.title == "Engineer"
+
+
+def test_insert_posting_creates_status(db, db_path):
+    cid = db.insert_company(models.Company(name="Acme"))
+    posting = models.JobPosting(
+        company_id=cid, title="Engineer", title_hash="abc", url="http://x.com"
+    )
+    pid = db.insert_posting(posting)
+
+    conn = _raw(db_path)
+    row = conn.execute(
+        "SELECT status FROM user_posting_status WHERE user_id = 1 AND posting_id = ?",
+        (pid,),
+    ).fetchone()
+    conn.close()
+    assert row is not None
+    assert row["status"] == "new"
+
+
+def test_posting_exists(db):
+    cid = db.insert_company(models.Company(name="Acme"))
+    posting = models.JobPosting(
+        company_id=cid, title="Engineer", title_hash="abc", url="http://x.com"
+    )
+    db.insert_posting(posting)
+
+    assert db.posting_exists(cid, "abc") is True
+    assert db.posting_exists(cid, "nonexistent") is False
+
+
+def test_posting_exists_by_url(db):
+    cid = db.insert_company(models.Company(name="Acme"))
+    posting = models.JobPosting(
+        company_id=cid, title="Engineer", title_hash="abc", url="http://x.com/job/1"
+    )
+    db.insert_posting(posting)
+
+    assert db.posting_exists_by_url("http://x.com/job/1") is True
+    assert db.posting_exists_by_url("http://x.com/job/2") is False
+
+
+def test_update_posting_embedding(db, db_path):
+    cid = db.insert_company(models.Company(name="Acme"))
+    posting = models.JobPosting(
+        company_id=cid, title="E", title_hash="h", url="http://x.com"
+    )
+    pid = db.insert_posting(posting)
+    db.update_posting_embedding(pid, b"test_embedding")
+
+    conn = _raw(db_path)
+    row = conn.execute(
+        "SELECT embedding FROM job_postings WHERE id = ?", (pid,)
+    ).fetchone()
+    conn.close()
+    assert row["embedding"] == b"test_embedding"
+
+
+def test_update_posting_similarity_writes_to_user_table(db, db_path):
+    cid = db.insert_company(models.Company(name="Acme"))
+    posting = models.JobPosting(
+        company_id=cid, title="E", title_hash="h", url="http://x.com"
+    )
+    pid = db.insert_posting(posting)
+    db.update_posting_similarity(pid, 0.95)
+
+    conn = _raw(db_path)
+    row = conn.execute(
+        "SELECT similarity_score FROM user_similarity_scores WHERE user_id = 1 AND posting_id = ?",
+        (pid,),
+    ).fetchone()
+    conn.close()
+    assert row is not None
+    assert row["similarity_score"] == pytest.approx(0.95)
+
+
+def test_update_posting_similarities_bulk(db, db_path):
+    cid = db.insert_company(models.Company(name="Acme"))
+    p1 = models.JobPosting(
+        company_id=cid, title="A", title_hash="a", url="http://x.com/a"
+    )
+    p2 = models.JobPosting(
+        company_id=cid, title="B", title_hash="b", url="http://x.com/b"
+    )
+    pid1 = db.insert_posting(p1)
+    pid2 = db.insert_posting(p2)
+
+    db.update_posting_similarities([(pid1, 0.5), (pid2, 0.8)])
+
+    conn = _raw(db_path)
+    rows = conn.execute(
+        "SELECT posting_id, similarity_score FROM user_similarity_scores WHERE user_id = 1 ORDER BY posting_id"
+    ).fetchall()
+    conn.close()
+    assert len(rows) == 2
+    assert float(rows[0]["similarity_score"]) == pytest.approx(0.5)
+    assert float(rows[1]["similarity_score"]) == pytest.approx(0.8)
+
+
+def test_mark_postings_seen(db, db_path):
+    cid = db.insert_company(models.Company(name="Acme"))
+    posting = models.JobPosting(
+        company_id=cid, title="E", title_hash="h", url="http://x.com"
+    )
+    pid = db.insert_posting(posting)
+
+    db.mark_postings_seen([pid])
+
+    conn = _raw(db_path)
+    row = conn.execute(
+        "SELECT status FROM user_posting_status WHERE user_id = 1 AND posting_id = ?",
+        (pid,),
+    ).fetchone()
+    conn.close()
+    assert row["status"] == "seen"
+
+
+def test_update_posting_status(db, db_path):
+    cid = db.insert_company(models.Company(name="Acme"))
+    posting = models.JobPosting(
+        company_id=cid, title="E", title_hash="h", url="http://x.com"
+    )
+    pid = db.insert_posting(posting)
+
+    db.update_posting_status(pid, "applied")
+
+    conn = _raw(db_path)
+    row = conn.execute(
+        "SELECT status FROM user_posting_status WHERE user_id = 1 AND posting_id = ?",
+        (pid,),
+    ).fetchone()
+    conn.close()
+    assert row["status"] == "applied"
+
+
+def test_count_postings(db):
+    cid = db.insert_company(models.Company(name="Acme"))
+    db.insert_posting(
+        models.JobPosting(
+            company_id=cid, title="A", title_hash="a", url="http://x.com/a"
+        )
+    )
+    db.insert_posting(
+        models.JobPosting(
+            company_id=cid, title="B", title_hash="b", url="http://x.com/b"
+        )
+    )
+
+    assert db.count_postings() == 2
+    assert db.count_postings(status="new") == 2
+    assert db.count_postings(status="seen") == 0
+
+
+def test_get_postings_with_scores(db):
+    cid = db.insert_company(models.Company(name="Acme"))
+    p1 = models.JobPosting(
+        company_id=cid, title="A", title_hash="a", url="http://x.com/a"
+    )
+    p2 = models.JobPosting(
+        company_id=cid, title="B", title_hash="b", url="http://x.com/b"
+    )
+    db.insert_posting(p1)
+    db.insert_posting(p2)
+
+    results = db.get_postings_with_scores(limit=10)
+    assert len(results) == 2
+    assert results[0]["company_name"] == "Acme"
+
+
+def test_get_postings_with_scores_status_new_defaults(db):
+    """Postings with no explicit status row should appear as 'new'."""
+    cid = db.insert_company(models.Company(name="Acme"))
+    posting = models.JobPosting(
+        company_id=cid, title="E", title_hash="h", url="http://x.com"
+    )
+    db.insert_posting(posting)
+
+    # Not yet seen by any user — should appear as "new"
+    results = db.get_postings_with_scores(status="new")
+    assert len(results) == 1
+
+    # After marking as seen, should not appear as "new"
+    pid = results[0]["id"]
+    db.update_posting_status(pid, "seen")
+    results = db.get_postings_with_scores(status="new")
+    assert len(results) == 0
+
+    # Should appear as "seen"
+    results = db.get_postings_with_scores(status="seen")
+    assert len(results) == 1
+
+
+def test_get_postings_with_scores_includes_similarity(db):
+    cid = db.insert_company(models.Company(name="Acme"))
+    posting = models.JobPosting(
+        company_id=cid, title="E", title_hash="h", url="http://x.com"
+    )
+    pid = db.insert_posting(posting)
+    db.update_posting_similarity(pid, 0.9)
+
+    results = db.get_postings_with_scores(status="new")
+    assert len(results) == 1
+    assert results[0]["title"] == "E"
+    assert results[0]["similarity_score"] == 0.9
+
+
+def test_get_postings_for_search(db):
+    cid = db.insert_company(models.Company(name="Acme"))
+    posting = models.JobPosting(
+        company_id=cid, title="E", title_hash="h", url="http://x.com"
+    )
+    pid = db.insert_posting(posting)
+    db.update_posting_embedding(pid, b"emb")
+
+    results = db.get_postings_for_search()
+    assert len(results) == 1
+    p, name = results[0]
+    assert name == "Acme"
+    assert p.title == "E"
+
+
+# ── Label CRUD ─────────────────────────────────────────────────
+
+
+def test_insert_and_get_label(db):
+    cid = db.insert_company(models.Company(name="Acme"))
+    posting = models.JobPosting(
+        company_id=cid, title="E", title_hash="h", url="http://x.com"
+    )
+    pid = db.insert_posting(posting)
+
+    label = models.UserLabel(
+        user_id=1, posting_id=pid, signal="positive", notes="great fit"
+    )
+    lid = db.insert_label(label)
+    assert lid > 0
+
+    labels = db.get_labels_for_posting(pid)
+    assert len(labels) == 1
+    assert labels[0].signal == "positive"
+    assert labels[0].notes == "great fit"
+
+
+def test_get_labels_for_posting_user_isolation(db, db_path):
+    cid = db.insert_company(models.Company(name="Acme"))
+    posting = models.JobPosting(
+        company_id=cid, title="E", title_hash="h", url="http://x.com"
+    )
+    pid = db.insert_posting(posting)
+
+    db.insert_label(models.UserLabel(user_id=1, posting_id=pid, signal="positive"))
+
+    # Insert label for user 2 via raw sqlite3 (FK off by default)
+    conn = _raw(db_path)
+    conn.execute("INSERT OR IGNORE INTO users (id, email) VALUES (2, 'u2@b.com')")
+    conn.execute(
+        "INSERT INTO user_labels (user_id, posting_id, signal) VALUES (2, ?, 'negative')",
+        (pid,),
+    )
+    conn.commit()
+    conn.close()
+
+    labels = db.get_labels_for_posting(pid, user_id=1)
+    assert len(labels) == 1
+    assert labels[0].signal == "positive"
+
+
+# ── System methods ─────────────────────────────────────────────
+
+
+def test_get_company_name(db):
+    cid = db.insert_company(models.Company(name="Acme"))
+    assert db.get_company_name(cid) == "Acme"
+    assert db.get_company_name(999) is None
+
+
+def test_insert_crawl_run(db):
+    cid = db.insert_company(models.Company(name="Acme"))
+    run = models.CrawlRun(
+        company_id=cid, status="success", postings_found=5, postings_new=3
+    )
+    rid = db.insert_crawl_run(run)
+    assert rid > 0
+
+
+def test_insert_agent_action(db):
+    action = models.AgentAction(tool_name="test", tool_args="{}")
+    aid = db.insert_agent_action(action)
+    assert aid > 0
+
+
+def test_get_agent_actions(db):
+    db.insert_agent_action(models.AgentAction(tool_name="t1"))
+    db.insert_agent_action(models.AgentAction(tool_name="t2"))
+    actions = db.get_agent_actions()
+    assert len(actions) == 2
+    actions_limited = db.get_agent_actions(limit=1)
+    assert len(actions_limited) == 1
+
+
+def test_insert_and_get_search_queries(db):
+    q = models.UserSearchQuery(user_id=1, query_text="senior engineer")
+    qid = db.insert_search_query(q)
+    assert qid > 0
+
+    queries = db.get_active_search_queries()
+    assert len(queries) == 1
+    assert queries[0].query_text == "senior engineer"
+
+
+def test_get_active_search_queries_user_isolation(db, db_path):
+    db.insert_search_query(models.UserSearchQuery(user_id=1, query_text="q1"))
+
+    conn = _raw(db_path)
+    conn.execute("INSERT OR IGNORE INTO users (id, email) VALUES (2, 'u2@c.com')")
+    conn.execute(
+        "INSERT INTO user_search_queries (user_id, query_text) VALUES (2, 'q2')"
+    )
+    conn.commit()
+    conn.close()
+
+    queries = db.get_active_search_queries(user_id=1)
+    assert len(queries) == 1
+    assert queries[0].query_text == "q1"
+
+
+def test_get_or_create_location(db):
+    parsed = models.ParsedLocation(canonical_name="San Francisco, CA, US")
+    loc_id = db.get_or_create_location(parsed)
+    assert loc_id > 0
+
+    # Idempotent
+    loc_id2 = db.get_or_create_location(parsed)
+    assert loc_id == loc_id2
+
+
+def test_link_posting_location(db, db_path):
+    cid = db.insert_company(models.Company(name="Acme"))
+    posting = models.JobPosting(
+        company_id=cid, title="E", title_hash="h", url="http://x.com"
+    )
+    pid = db.insert_posting(posting)
+    parsed = models.ParsedLocation(canonical_name="SF")
+    loc_id = db.get_or_create_location(parsed)
+
+    db.link_posting_location(pid, loc_id)
+    # Idempotent
+    db.link_posting_location(pid, loc_id)
+
+    conn = _raw(db_path)
+    row = conn.execute(
+        "SELECT COUNT(*) as cnt FROM job_posting_locations WHERE posting_id = ?",
+        (pid,),
+    ).fetchone()
+    conn.close()
+    assert row["cnt"] == 1
+
+
+def test_get_setting_and_set_setting(db):
+    assert db.get_setting("nonexistent") is None
+    db.set_setting("test_key", "test_value")
+    assert db.get_setting("test_key") == "test_value"
+    # Overwrite
+    db.set_setting("test_key", "new_value")
+    assert db.get_setting("test_key") == "new_value"

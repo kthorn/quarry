@@ -5,24 +5,11 @@
 ```bash
 # Install (uses CPU-only torch to avoid CUDA dependencies)
 pip install -e ".[dev]" -c constraints.txt
-
-# Setup
-cp quarry/config.yaml.example quarry/config.yaml
-python -m quarry.store init          # Initialize SQLite db
-python -m quarry.agent.tools seed    # Seed initial data
-
-# Run
-python -m quarry.agent run-once           # Single search cycle
-python -m quarry.agent.scheduler          # Continuous scheduler
-python -m quarry.ui.app                    # Labeling UI (Flask)
-python -m quarry.store --help              # CLI commands
-
 # Test & Lint
 python -m pytest                           # Run all tests
 ruff check .                               # Lint (auto-fix: --fix)
 PYTHONPATH=/home/kurtt/job-search pyright quarry/  # Type check
-
-# Pre-commit hooks (auto-run lint/pyright after git commit)
+ # Pre-commit hooks (auto-run lint/pyright after git commit)
 pre-commit install
 ```
 

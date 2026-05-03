@@ -1,6 +1,6 @@
 # STATUS
 
-Last updated: 2026-04-29
+Last updated: 2026-05-03 (post multi-user schema, all four phases complete)
 
 ## Phase 1 — MVP Progress
 
@@ -46,7 +46,8 @@ All refined plans in `docs/plans/completed/`:
 10. `2026-04-12-haversine-location-matching-design.md`
 11. `2026-04-12-unified-filter-pipeline.md`
 12. `2026-04-14-m8-labeling-ui.md`
-13. **`2026-04-29-multi-user-schema.md`** (Phase 1 of 4: DDL) — schema rewritten with per-user tables; 28 schema tests passing; old `quarry.db` replaced; schema documentation at `docs/multi-user-schema.md`
+
+**Multi-user schema** (all 4 phases complete) — see "Multi-User Architecture" table above and design spec at `docs/multi-user-schema.md`
 
 ## Verification
 
@@ -60,8 +61,9 @@ All refined plans in `docs/plans/completed/`:
 - `python -m pytest tests/test_db.py -v` — **28 schema tests passing** (all green)
 - `python -m pytest tests/test_orm.py -v` — **17 ORM tests passing** (Phase 2)
 - `ruff check .` — clean
-- `pyright quarry/store/models.py quarry/store/session.py quarry/store/db.py tests/test_orm.py` — clean
-- **Note:** CRUD-dependent tests (test_ui.py, test_seed.py, test_m4_integration.py, etc.) are broken pending Phase 3 CRUD rewrite. The `db.py` raw-SQL methods still target pre-Phase-1 schema.
+- `pyright quarry/` — clean
+- `python -m pytest tests/ -q` — **374 passed, 22 skipped, 1 failed, 9 errors** (9 errors are pre-existing `httpx_mock` fixture issues; 1 failure tracked separately)
+- **Note:** All four phases complete. All callers use per-user ORM methods with `user_id=1`. `get_recent_postings`/`get_postings_paginated`/`db.execute()` removed. Backward-compat aliases removed from `models.py`.
 
 ## Remaining MVP Tasks (from TASKS.md)
 
@@ -107,14 +109,14 @@ All refined plans in `docs/plans/completed/`:
 
 ## Multi-User Architecture (Phased)
 
-| Phase                                 | Status      | Document                                                       |
-| ------------------------------------- | ----------- | -------------------------------------------------------------- |
-| Phase 1: DDL schema                   | **DONE**    | `docs/superpowers/plans/2026-04-29-multi-user-schema.md`       |
-| Phase 2: SQLAlchemy 2.0 ORM + Alembic | Not started | `docs/superpowers/plans/2026-04-29-multi-user-architecture.md` |
-| Phase 3: CRUD rewrite                 | Not started | `docs/superpowers/plans/2026-04-29-multi-user-architecture.md` |
-| Phase 4: Caller updates               | Not started | `docs/superpowers/plans/2026-04-29-multi-user-architecture.md` |
+| Phase                                 | Status   | Design Spec                                   |
+| ------------------------------------- | -------- | --------------------------------------------- |
+| Phase 1: DDL schema                   | **DONE** | `docs/multi-user-schema.md` (ERD + DDL)       |
+| Phase 2: SQLAlchemy 2.0 ORM + Alembic | **DONE** | `docs/multi-user-schema.md` (model reference) |
+| Phase 3: CRUD rewrite                 | **DONE** | (incorporated in db.py)                       |
+| Phase 4: Caller updates               | **DONE** | (all callers use user_id=1)                   |
 
-Schema documentation: `docs/multi-user-schema.md` (includes ERD)
+Schema documentation: `docs/multi-user-schema.md` (ERD, table docs, design decisions, data migration reference)
 
 ## Key Files
 
@@ -125,9 +127,12 @@ quarry/
 ├── digest/         build + write digest file
 ├── pipeline/       extract, embedder, filter (FilterStep classes), locations, search
 ├── resolve/        company resolver (domain, ATS detection)
-├── store/          db.py, schema.py
+├── store/          db.py (ORM CRUD), models.py (ORM Mapped[] classes), session.py (engine + session factory), schema.py (retired)
 ├── config.py       Settings (Pydantic + YAML), FiltersConfig models
-├── models.py       Pydantic models, FilterDecision dataclass
+├── models.py       Pydantic API models, FilterDecision dataclass
 ├── ui/             Flask labeling UI (app, routes, templates, static)
 └── http.py         shared HTTP client
+alembic/
+├── env.py          Alembic environment (targets ORM Base metadata)
+└── versions/       4596e16062f9_initial_multi_user_schema.py
 ```

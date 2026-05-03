@@ -28,7 +28,7 @@ def embed_ideal():
 
     from quarry.pipeline.embedder import set_ideal_embedding
 
-    embedding = set_ideal_embedding(db, desc)
+    embedding = set_ideal_embedding(db, desc, user_id=1)
     threshold = settings.similarity_threshold
     click.echo(
         f"Ideal role description embedded successfully.\n"

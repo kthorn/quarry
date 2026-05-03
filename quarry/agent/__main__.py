@@ -39,7 +39,7 @@ def run_once():
     from quarry.agent.scheduler import run_once as do_run
 
     db = get_db()
-    summary = do_run(db)
+    summary = do_run(db, user_id=1)
     click.echo(f"Crawl complete: {summary}")
 
 

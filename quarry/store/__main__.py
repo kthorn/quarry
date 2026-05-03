@@ -43,7 +43,6 @@ def add_company(name: str, domain: str | None, careers_url: str | None) -> None:
         domain=domain,
         careers_url=careers_url,
         ats_type="unknown",
-        added_by="cli",
     )
 
     if careers_url:

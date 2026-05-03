@@ -25,22 +25,19 @@ def build_digest(db: Database, limit: int | None = None) -> list[dict]:
         List of dicts with posting data, sorted by similarity_score descending.
     """
     limit = limit or settings.digest_top_n
-    postings = db.get_recent_postings(limit=limit, status="new")
-    entries = []
-    for p in postings:
-        company_name = db.get_company_name(p.company_id) or "Unknown"
-        entries.append(
-            {
-                "id": p.id,
-                "company_name": company_name,
-                "title": p.title,
-                "url": p.url,
-                "similarity_score": p.similarity_score or 0.0,
-                "location": p.location or "N/A",
-                "work_model": p.work_model,
-            }
-        )
-    return entries
+    rows = db.get_postings_with_scores(status="new", limit=limit, offset=0)
+    return [
+        {
+            "id": row["id"],
+            "company_name": row["company_name"],
+            "title": row["title"],
+            "url": row["url"],
+            "similarity_score": row["similarity_score"],
+            "location": row["location"] or "N/A",
+            "work_model": row["work_model"],
+        }
+        for row in rows
+    ]
 
 
 def format_digest(entries: list[dict]) -> str:

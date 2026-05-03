@@ -133,32 +133,37 @@ def deserialize_embedding(data: bytes, dim: int | None = None) -> np.ndarray:
     return arr
 
 
-def set_ideal_embedding(db, description: str) -> np.ndarray:
-    """Compute and store the ideal role embedding in DB settings.
+def set_ideal_embedding(db, description: str, user_id: int = 1) -> np.ndarray:
+    """Compute and store the ideal role embedding for a specific user.
 
     Args:
         db: Database instance.
         description: The ideal role description text.
+        user_id: User to store the embedding for (default 1).
 
     Returns:
         The computed embedding vector.
     """
     embedding = embed_text(description)
-    db.set_setting("ideal_role_embedding", serialize_embedding(embedding).hex())
-    db.set_setting("ideal_role_description", description)
+    db.save_user_setting(
+        user_id, "ideal_role_embedding", serialize_embedding(embedding).hex()
+    )
+    db.save_user_setting(user_id, "ideal_role_description", description)
     return embedding
 
 
-def get_ideal_embedding(db) -> np.ndarray | None:
-    """Retrieve the stored ideal role embedding from DB.
+def get_ideal_embedding(db, user_id: int = 1) -> np.ndarray | None:
+    """Retrieve the stored ideal role embedding for a specific user.
 
     Args:
         db: Database instance.
+        user_id: User to retrieve the embedding for (default 1).
 
     Returns:
         Stored embedding vector, or None if not set.
     """
-    hex_str = db.get_setting("ideal_role_embedding")
+    settings_raw = db.get_user_settings_raw(user_id)
+    hex_str = settings_raw.get("ideal_role_embedding")
     if hex_str is None:
         return None
     raw = bytes.fromhex(hex_str)

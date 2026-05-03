@@ -73,8 +73,8 @@ class JobSpyClient:
         seen_companies: dict[str, Company] = {}
 
         for _, row in df.iterrows():
-            company_name = str(row.get("company", "Unknown"))
-            site_name = str(row.get("site_name", "indeed"))
+            company_name = self._safe_str(row.get("company"), "Unknown")
+            site_name = self._safe_str(row.get("site_name"), "indeed")
 
             source_type = SITE_NAME_TO_SOURCE_TYPE.get(
                 site_name.lower(), site_name.lower()
@@ -87,21 +87,34 @@ class JobSpyClient:
             company = seen_companies[company_name]
             company_id = company.id if company and company.id else 0
 
+            desc_raw = row.get("description")
+            loc_raw = row.get("location")
+
             posting = RawPosting(
                 company_id=company_id,
-                title=str(row.get("title", "Unknown")),
-                url=str(row.get("url", "")),
-                description=str(row.get("description"))
-                if row.get("description")
+                title=self._safe_str(row.get("title"), "Unknown"),
+                url=self._safe_str(row.get("url"), ""),
+                description=self._safe_str(desc_raw)
+                if desc_raw is not None and pd.notna(desc_raw)
                 else None,
-                location=str(row.get("location")) if row.get("location") else None,
+                location=self._safe_str(loc_raw)
+                if loc_raw is not None and pd.notna(loc_raw)
+                else None,
                 posted_at=row.get("date_posted"),
-                source_id=str(row.get("job_id", "")),
+                source_id=self._safe_str(row.get("job_id"), ""),
                 source_type=str(source_type),
             )
             postings.append(posting)
 
         return postings
+
+    @staticmethod
+    def _safe_str(value, default: str = "") -> str:
+        """Convert a pandas value to string, treating NaN/None as default."""
+        if value is None or pd.isna(value):
+            return default
+        s = str(value).strip()
+        return s if s else default
 
     def _default_company_resolver(self, company_name: str) -> Company:
         """Default resolver returns Company with no ID."""

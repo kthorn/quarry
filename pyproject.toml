@@ -30,6 +30,9 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8.0.0", "ruff", "pyright", "pre-commit"]
 
+[tool.setuptools.packages.find]
+include = ["quarry*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = "."

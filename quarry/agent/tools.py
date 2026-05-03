@@ -8,7 +8,7 @@ import click
 import yaml
 
 from quarry.config import settings
-from quarry.models import Company, SearchQuery
+from quarry.models import Company, UserSearchQuery
 from quarry.store.db import Database, init_db
 
 log = logging.getLogger(__name__)
@@ -16,7 +16,7 @@ log = logging.getLogger(__name__)
 
 def load_seed_data(
     seed_path: str | None = None,
-) -> tuple[list[Company], list[SearchQuery]]:
+) -> tuple[list[Company], list[UserSearchQuery]]:
     """Load companies and search queries from a YAML seed file.
 
     Supports both dict format (with 'companies' and 'search_queries' keys)
@@ -59,22 +59,17 @@ def load_seed_data(
                 careers_url=c.get("careers_url"),
                 ats_type=c.get("ats_type", "unknown"),
                 ats_slug=c.get("ats_slug"),
-                active=c.get("active", True),
-                crawl_priority=c.get("crawl_priority", 5),
-                notes=c.get("notes"),
-                added_by="seed",
-                added_reason=c.get("added_reason"),
             )
         )
 
     queries = []
     for q in queries_data:
         queries.append(
-            SearchQuery(
+            UserSearchQuery(
+                user_id=1,
                 query_text=q["query_text"],
                 site=q.get("site"),
                 active=q.get("active", True),
-                added_by="seed",
                 added_reason=q.get("added_reason"),
             )
         )
@@ -110,9 +105,18 @@ def seed(db: Database | None = None, seed_file: str | None = None) -> tuple[int,
             log.info("Skipping existing company: %s", company.name)
             skipped += 1
             continue
-        db.insert_company(company)
+        company_id = db.insert_company(company)
         existing_companies.add(company.name.lower())
         log.info("Seeded company: %s", company.name)
+        # Upsert watchlist with per-user fields from seed data
+        watchlist = db.get_watchlist(user_id=1, active_only=False)
+        for wi in watchlist:
+            if wi.company_id == company_id:
+                wi.crawl_priority = 5
+                wi.notes = None
+                wi.added_reason = "seed"
+                db.upsert_watchlist_item(wi)
+                break
         inserted += 1
 
     existing_queries = {q.query_text for q in db.get_active_search_queries()}
@@ -149,30 +153,33 @@ def seed_command(seed_file):
 @click.option("--dry-run", is_flag=True, help="Report stats without making changes")
 def normalize_locations_command(dry_run: bool):
     """Parse and normalize location data for all existing postings."""
-    from quarry.models import JobPosting
+    from sqlalchemy import update
+
     from quarry.pipeline.locations import parse_location
+    from quarry.store.models import JobPosting as ORMPosting
+    from quarry.store.session import session_scope
 
     db = init_db(settings.db_path)
 
-    rows = db.execute(
-        "SELECT * FROM job_postings WHERE location IS NOT NULL AND location != ''"
-    )
-    parsed_postings = [JobPosting(**dict(row)) for row in rows]
-    click.echo(f"Found {len(parsed_postings)} postings with locations")
+    postings = db.get_postings()
+    postings_with_locations = [p for p in postings if p.location]
+    click.echo(f"Found {len(postings_with_locations)} postings with locations")
 
     locations_created = 0
     links_created = 0
     unresolvable = 0
 
-    for posting in parsed_postings:
+    for posting in postings_with_locations:
         parse_result = parse_location(posting.location)
 
         if parse_result.work_model and not posting.work_model:
             if not dry_run:
-                db.execute(
-                    "UPDATE job_postings SET work_model = ? WHERE id = ?",
-                    (parse_result.work_model, posting.id),
-                )
+                with session_scope(engine=db.engine) as session:
+                    session.execute(
+                        update(ORMPosting)
+                        .where(ORMPosting.id == posting.id)
+                        .values(work_model=parse_result.work_model)
+                    )
 
         for loc in parse_result.locations:
             if not dry_run:
@@ -201,7 +208,7 @@ def recompute_similarity_command():
     click.echo("Similarity recomputation complete.")
 
 
-def recompute_similarity(db: Database | None = None) -> None:
+def recompute_similarity(db: Database | None = None, user_id: int = 1) -> None:
     """Recompute all similarity scores against the current ideal role embedding."""
     from quarry.pipeline.embedder import (
         deserialize_embedding,
@@ -214,8 +221,8 @@ def recompute_similarity(db: Database | None = None) -> None:
 
     from quarry.agent.scheduler import _ensure_ideal_embedding
 
-    _ensure_ideal_embedding(db)
-    ideal_embedding = get_ideal_embedding(db)
+    _ensure_ideal_embedding(db, user_id)
+    ideal_embedding = get_ideal_embedding(db, user_id)
     if ideal_embedding is None:
         print("No ideal role embedding found. Set ideal_role_description in config.")
         return
@@ -235,7 +242,7 @@ def recompute_similarity(db: Database | None = None) -> None:
         score = cosine_similarity(emb, ideal_embedding)
         updates.append((p.id, round(score, 4)))
 
-    db.update_posting_similarities(updates)
+    db.update_posting_similarities(updates, user_id=user_id)
     print(
         f"Updated {len(updates)} posting similarity scores. "
         f"Skipped {skipped} postings with no embedding."

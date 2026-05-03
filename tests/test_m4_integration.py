@@ -53,15 +53,18 @@ class TestEndToEndPipeline:
         score, _ = embed_and_score(raw, ideal_emb)
         assert score > 0.0
 
-        posting.similarity_score = score
-
         posting_id = db.insert_posting(posting)
         assert posting_id > 0
 
+        db.update_posting_similarity(posting_id, score, user_id=1)
+
         fetched_postings = db.get_postings(status="new")
         assert len(fetched_postings) >= 1
-        fetched = fetched_postings[0]
-        assert fetched.similarity_score == score
+        # similarity_score is now on user_similarity_scores, not JobPosting
+        rows = db.get_postings_with_scores(status="new", limit=10)
+        assert any(
+            r["id"] == posting_id and r["similarity_score"] == score for r in rows
+        )
 
     def test_blocklisted_posting_rejected(self, db, seed_company):
         raw = RawPosting(
@@ -124,7 +127,6 @@ class TestEndToEndPipeline:
             title_hash="abc123",
             url="https://example.com/job/embed",
             source_type="greenhouse",
-            similarity_score=0.75,
             embedding=serialized,
         )
 
@@ -133,12 +135,10 @@ class TestEndToEndPipeline:
 
         db.update_posting_embedding(posting_id, serialized)
 
-        rows = db.execute(
-            "SELECT embedding FROM job_postings WHERE id = ?", (posting_id,)
-        )
-        assert rows is not None
-        stored = rows[0]["embedding"]
-        retrieved = deserialize_embedding(stored)
+        fetched = db.get_posting_by_id(posting_id)
+        assert fetched is not None
+        assert fetched.embedding is not None
+        retrieved = deserialize_embedding(fetched.embedding)
         assert np.allclose(emb, retrieved)
 
     def test_dedup_prevents_duplicate_insert(self, db, seed_company):

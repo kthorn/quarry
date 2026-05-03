@@ -40,10 +40,9 @@ def test_duplicate_posting_is_skipped(tmp_path):
 
     # Verify only one posting exists
     assert db.posting_exists_by_url("https://example.com/job/123")
-    rows = db.execute(
-        "SELECT COUNT(*) FROM job_postings WHERE url = ?", (posting2.url,)
-    )
-    assert rows[0][0] == 1
+    postings = db.get_postings()
+    matching = [p for p in postings if p.url == posting2.url]
+    assert len(matching) == 1
 
 
 def test_different_postings_are_both_inserted(tmp_path):
@@ -79,5 +78,4 @@ def test_different_postings_are_both_inserted(tmp_path):
     # Verify both exist
     assert db.posting_exists_by_url("https://example.com/job/123")
     assert db.posting_exists_by_url("https://example.com/job/456")
-    rows = db.execute("SELECT COUNT(*) FROM job_postings")
-    assert rows[0][0] == 2
+    assert db.count_postings() == 2

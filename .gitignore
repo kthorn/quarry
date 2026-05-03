@@ -77,3 +77,7 @@ digest_*.txt
 
 # Git worktree isolation
 .worktrees/
+
+# pi
+.pi/
+.pi-lens/crawl_log_*.csv
