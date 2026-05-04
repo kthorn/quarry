@@ -873,6 +873,22 @@ class Database:
 
     # ── Watchlist methods ───────────────────────────────────────
 
+    def get_watchlist_item(
+        self, user_id: int, company_id: int
+    ) -> models.UserWatchlistItem | None:
+        from quarry.store.models import UserWatchlistItem as ORMWatchlist
+
+        with session_scope(engine=self.engine) as session:
+            row = session.execute(
+                select(ORMWatchlist).where(
+                    ORMWatchlist.user_id == user_id,
+                    ORMWatchlist.company_id == company_id,
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                return None
+            return models.UserWatchlistItem.model_validate(row, from_attributes=True)
+
     def get_watchlist(
         self,
         user_id: int = 1,
