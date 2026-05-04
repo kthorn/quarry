@@ -129,11 +129,13 @@ def activate_company(company_id):
     company = db.get_company(company_id)
     if company is None:
         return "Company not found", 404
+    assert company.id is not None
 
     if company.resolve_status != "resolved":
         from quarry.resolve.pipeline import resolve_company_sync
 
         company = resolve_company_sync(company, db=db)
+    assert company.id is not None
 
     # Mark watchlist entry as active, preserving existing provenance
     existing_wl = db.get_watchlist_item(user_id=USER_ID, company_id=company.id)
