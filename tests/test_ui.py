@@ -493,3 +493,35 @@ class TestLogRoute:
         response = client.get("/log")
         assert response.status_code == 200
         assert b"No agent" in response.data
+
+
+class TestCompaniesDiscovered:
+    def test_companies_page_shows_discovered(self, app, tmp_path):
+        db = Database(tmp_path / "test.db")
+        from quarry.models import Company, UserWatchlistItem
+
+        # Create a discovered company
+        company = Company(name="SearchCo")
+        company.id = db.insert_company(company)
+        db.upsert_watchlist_item(
+            UserWatchlistItem(
+                user_id=1, company_id=company.id, active=False, added_reason="search"
+            )
+        )
+
+        # Also create a seed company
+        seed = Company(name="SeedCo")
+        seed.id = db.insert_company(seed)
+        db.upsert_watchlist_item(
+            UserWatchlistItem(
+                user_id=1, company_id=seed.id, active=True, added_reason="seed"
+            )
+        )
+
+        client = app.test_client()
+        resp = client.get("/companies")
+        assert resp.status_code == 200
+        html = resp.data.decode()
+        assert "Discovered via Search" in html
+        assert "SearchCo" in html
+        assert "SeedCo" in html
