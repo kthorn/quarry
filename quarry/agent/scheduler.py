@@ -376,6 +376,11 @@ def run_once(db: Database, user_id: int = 1) -> dict:
     total_found += len(search_postings)
     log.info("Phase: processing %d search query results", len(search_postings))
 
+    # Resolve newly discovered companies in the background
+    from quarry.resolve.pipeline import resolve_unresolved_sync
+
+    resolve_unresolved_sync(db, max_concurrent=settings.max_concurrent_per_host)
+
     for raw in search_postings:
         company_name = ""
         if " at " in raw.title:

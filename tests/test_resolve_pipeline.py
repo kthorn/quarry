@@ -1,15 +1,38 @@
+import asyncio
 import os
+from unittest.mock import Mock, patch
 
 import pytest
 
 from quarry.models import Company
 from quarry.store.db import init_db
 
-pytestmark = pytest.mark.skip(
-    reason="Phase 4 — production code needs per-user field updates"
-)
+
+@pytest.mark.asyncio
+async def test_resolve_companies_batch_respects_semaphore():
+    """Only max_concurrent resolutions run at once."""
+    db = Mock()
+    companies = [Company(name=f"Co{i}", id=i) for i in range(5)]
+
+    active_count = 0
+    max_observed = 0
+
+    async def fake_resolve(company, db=None, client=None):
+        nonlocal active_count, max_observed
+        active_count += 1
+        max_observed = max(max_observed, active_count)
+        await asyncio.sleep(0.01)
+        active_count -= 1
+
+    with patch("quarry.resolve.pipeline.resolve_company", side_effect=fake_resolve):
+        from quarry.resolve.pipeline import resolve_companies_batch
+
+        await resolve_companies_batch(db, companies, max_concurrent=2)
+
+    assert max_observed <= 2
 
 
+@pytest.mark.skip(reason="Phase 4 — production code needs per-user field updates")
 @pytest.mark.asyncio
 async def test_resolve_company_skips_already_resolved():
     from quarry.http import close_client
@@ -28,6 +51,7 @@ async def test_resolve_company_skips_already_resolved():
     await close_client()
 
 
+@pytest.mark.skip(reason="Phase 4 — production code needs per-user field updates")
 @pytest.mark.asyncio
 async def test_resolve_company_sets_failed_after_max_attempts(httpx_mock):
     from quarry.http import close_client, get_client
@@ -55,6 +79,7 @@ async def test_resolve_company_sets_failed_after_max_attempts(httpx_mock):
         os.remove(db_path)
 
 
+@pytest.mark.skip(reason="Phase 4 — production code needs per-user field updates")
 @pytest.mark.asyncio
 async def test_resolve_unresolved_processes_unresolved_companies(httpx_mock):
     from quarry.http import close_client
