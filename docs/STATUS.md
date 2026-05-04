@@ -1,6 +1,6 @@
 # STATUS
 
-Last updated: 2026-05-03 (post multi-user schema, all four phases complete; session poison + crawl-run crash fixes)
+Last updated: 2026-05-03 (search-discovered companies; session poison + crawl-run crash fixes)
 
 ## Phase 1 — MVP Progress
 
@@ -50,6 +50,10 @@ All refined plans in `docs/plans/completed/`:
 
 **Multi-user schema** (all 4 phases complete) — see "Multi-User Architecture" table above and design spec at `docs/multi-user-schema.md`
 
+**Search-discovered companies**: JobSpy-discovered companies created in shared `companies` table with domain/ATS hints from `company_url_direct`/`job_url_direct` URL patterns; linked via inactive `user_watchlist` entries (`active=False, added_reason='search'`); auto-resolved in background with `asyncio.Semaphore`; surfaced in UI "Discovered" section with Activate button
+- **NaN bug fix**: JobSpy DataFrame values sanitized via `_safe_str()` before creating companies/postings
+- Plan: `docs/superpowers/plans/2026-04-28-search-discovered-companies.md`
+
 ## Verification
 
 - `python -m quarry.store init` — initializes database
@@ -63,7 +67,7 @@ All refined plans in `docs/plans/completed/`:
 - `python -m pytest tests/test_orm.py -v` — **17 ORM tests passing** (Phase 2)
 - `ruff check .` — clean
 - `pyright quarry/` — clean
-- `python -m pytest tests/ -q` — **374 passed, 22 skipped, 1 failed, 9 errors** (9 errors are pre-existing `httpx_mock` fixture issues; 1 failure tracked separately)
+- `python -m pytest tests/ -q` — **409 passed, 22 skipped** (0 failures)
 - **Note:** All four phases complete. All callers use per-user ORM methods with `user_id=1`. `get_recent_postings`/`get_postings_paginated`/`db.execute()` removed. Backward-compat aliases removed from `models.py`.
 
 ## Remaining MVP Tasks (from TASKS.md)

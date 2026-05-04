@@ -117,6 +117,7 @@ def resolve_or_create_search_company(
         )
     else:
         # Company already exists — only add watchlist if not present
+        assert company.id is not None
         existing_wl = db.get_watchlist_item(user_id, company.id)
         if existing_wl is None:
             db.upsert_watchlist_item(
