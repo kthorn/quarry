@@ -14,6 +14,7 @@ pip install -e ".[dev]" -c constraints.txt
 > **Important:** Always include `-c constraints.txt`. Without it, pip will install
 > the default CUDA-enabled PyTorch (~2GB of NVIDIA/CUDA packages). If you
 > accidentally install without constraints, run:
+>
 > ```bash
 > pip install --force-reinstall torch --index-url https://download.pytorch.org/whl/cpu
 > pip uninstall -y cuda-bindings cuda-pathfinder cuda-toolkit nvidia-cublas \
@@ -38,11 +39,13 @@ python -m quarry.agent.tools seed
 ```
 
 Expected output:
+
 ```
 Seeded 29 companies, skipped 0
 ```
 
 Running `seed` again will skip existing companies:
+
 ```
 Seeded 0 companies, skipped 29
 ```
@@ -53,13 +56,13 @@ The `seed` command reads `seed_data.yaml` from the project root (configurable
 via `seed_file` in `config.yaml`). Each entry becomes a `Company` record:
 
 ```yaml
-- name: OpenAI                    # required
-  domain: openai.com              # optional
-  careers_url: https://openai.com/careers  # optional
-  ats_type: greenhouse            # greenhouse | lever | ashby | generic | unknown
-  ats_slug: openai                # ATS board slug (e.g. boards.greenhouse.io/{slug})
-  crawl_priority: 8               # 1-10, default 5
-  added_reason: Leading AI lab     # optional
+- name: OpenAI # required
+  domain: openai.com # optional
+  careers_url: https://openai.com/careers # optional
+  ats_type: greenhouse # greenhouse | lever | ashby | generic | unknown
+  ats_slug: openai # ATS board slug (e.g. boards.greenhouse.io/{slug})
+  crawl_priority: 8 # 1-10, default 5
+  added_reason: Leading AI lab # optional
 ```
 
 To add more companies, edit `seed_data.yaml` and re-run `python -m quarry.agent.tools seed`.
@@ -134,6 +137,7 @@ python -m quarry.digest --mark-seen
 ```
 
 Output format:
+
 ```
 === Quarry Digest - 2026-04-11 16:00 UTC ===
 3 new posting(s)
@@ -154,6 +158,92 @@ Senior Engineer,OpenAI,https://...,San Francisco,0.872,new
 ```
 
 The file is named `crawl_log_YYYYMMDD_HHMM.csv` and written to the working directory.
+
+## Local Web UI
+
+The local web UI lets you review, classify, and manage job postings through a
+browser. It's a Flask app with server-rendered HTML (no JS framework) that
+works directly against the SQLite database.
+
+### Starting the UI
+
+```bash
+python -m quarry.ui
+```
+
+The server binds to `127.0.0.1:5000` by default. Open
+[http://127.0.0.1:5000](http://127.0.0.1:5000) in your browser.
+
+Available options:
+
+```bash
+python -m quarry.ui --host 0.0.0.0 --port 8080   # Custom host/port
+python -m quarry.ui --debug                        # Enable Flask debug mode
+```
+
+### Pages
+
+**Postings** (`/postings`) — The main review interface. Postings are grouped
+into status tabs:
+
+| Status   | Meaning                          |
+| -------- | -------------------------------- |
+| New      | Unreviewed (default after crawl) |
+| Seen     | Reviewed but no decision         |
+| Applied  | You applied to this role         |
+| Rejected | Not a fit (pass)                 |
+| Archived | Hidden from review               |
+
+Each posting card shows the title (linked to the original posting), company name,
+location, work model, status badge, and similarity score. Expand the
+**Description** section to read the full job description inline.
+
+Action buttons on each card:
+
+- **Applied** — marks the posting as applied and logs a positive training signal
+- **Pass** — rejects the posting as a poor fit (logs a negative training signal)
+- **Archive** — hides the posting from review (logs a skip signal)
+
+These signals feed the classifier, improving future ranking as you label more
+postings.
+
+Pagination shows 20 postings per page. Use the status tabs at the top to switch
+between views; each tab shows the count of postings in that bucket.
+
+**Companies** (`/companies`) — View your company watchlist split into active and
+inactive sections. Use **Deactivate** to pause crawling a company, or
+**Reactivate** to resume. Changes take effect on the next crawl cycle.
+
+**Agent Log** (`/log`) — View the last 100 agent actions (tool calls, arguments,
+results, and rationale). Useful for debugging what the agent is doing during
+`run-once` or scheduler cycles.
+
+### Configuration
+
+UI settings live in `config.yaml`:
+
+```yaml
+# === UI ===
+ui_host: "127.0.0.1" # Bind address (default: 127.0.0.1)
+ui_port: 5000 # Port (default: 5000)
+ui_debug: false # Flask debug mode (default: false)
+```
+
+These can also be set via environment variables:
+
+```bash
+UI_PORT=8080 python -m quarry.ui
+```
+
+### Typical Workflow
+
+1. Run `python -m quarry.agent run-once` to discover new postings
+2. Start the UI with `python -m quarry.ui`
+3. Review new postings under the **New** tab
+4. Label each posting (Applied / Pass / Archive)
+5. Run `python -m quarry.digest` to get a plain-text digest of top unseen
+   postings (optionally with `--mark-seen`)
+6. Periodically check the **Agent Log** to see what the scheduler is doing
 
 ## Testing & Linting
 
