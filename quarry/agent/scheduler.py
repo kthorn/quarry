@@ -301,7 +301,10 @@ def run_once(db: Database, user_id: int = 1) -> dict:
             run.postings_found = 0
             run.postings_new = 0
 
-        db.insert_crawl_run(run)
+        try:
+            db.insert_crawl_run(run)
+        except Exception as e:
+            log.error("Failed to record crawl run for %s: %s", company.name, e)
 
     search_postings = _crawl_search_queries(db, user_id=user_id)
     total_found += len(search_postings)

@@ -1,6 +1,6 @@
 # STATUS
 
-Last updated: 2026-05-03 (post multi-user schema, all four phases complete)
+Last updated: 2026-05-03 (post multi-user schema, all four phases complete; session poison + crawl-run crash fixes)
 
 ## Phase 1 — MVP Progress
 
@@ -29,6 +29,7 @@ Last updated: 2026-05-03 (post multi-user schema, all four phases complete)
 - **Search CLI** (`python -m quarry.pipeline search`): keyword filtering by title/description, similarity scoring against an ad-hoc ideal description, terminal table output via tabulate
 - **Crawl log CSV**: ATS crawler 404 handling, noisy log suppression
 - **RUNBOOK.md**: pre-execution checklist and operational guide
+- **Bug fix (2026-05-03)**: `session_scope()` now invalidates poisoned connections after rollback, preventing `SingletonThreadPool` from handing the same broken connection to the next session (root cause of cascading "readonly database" crashes). `insert_crawl_run` in `run_once()` wrapped in try/except as defense-in-depth.
 
 ## Completed Plans
 
