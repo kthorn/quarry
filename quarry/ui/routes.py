@@ -2,7 +2,7 @@ from typing import Literal
 
 from flask import Blueprint, current_app, redirect, render_template, request, url_for
 
-from quarry.models import UserLabel
+from quarry.models import UserLabel, UserWatchlistItem
 from quarry.store.db import Database
 
 bp = Blueprint("ui", __name__, template_folder="templates")
@@ -98,22 +98,56 @@ def label(posting_id):
 @bp.route("/companies")
 def companies():
     db = get_db()
-    watchlist = db.get_watchlist(user_id=USER_ID, active_only=False)
-    active_items = [w for w in watchlist if w.active]
-    inactive_items = [w for w in watchlist if not w.active]
 
-    active = []
-    for wi in active_items:
-        c = db.get_company(wi.company_id)
-        if c:
-            active.append(c)
-    inactive = []
-    for wi in inactive_items:
-        c = db.get_company(wi.company_id)
-        if c:
-            inactive.append(c)
+    # Active companies (watchlist where active=True)
+    active = db.get_watchlist_companies(user_id=USER_ID, active=True)
 
-    return render_template("companies.html", active=active, inactive=inactive)
+    # Inactive non-search companies (e.g., manually deactivated)
+    inactive = [
+        c
+        for c in db.get_watchlist_companies(user_id=USER_ID, active=False)
+        if c.get("added_reason") != "search"
+    ]
+
+    # Discovered via search (watchlist where active=False, added_reason="search")
+    discovered = db.get_watchlist_companies(
+        user_id=USER_ID, active=False, added_reason="search"
+    )
+
+    return render_template(
+        "companies.html",
+        active=active,
+        inactive=inactive,
+        discovered=discovered,
+    )
+
+
+@bp.route("/companies/<int:company_id>/activate", methods=["POST"])
+def activate_company(company_id):
+    """Activate a discovered company, resolving it first if needed."""
+    db = get_db()
+    company = db.get_company(company_id)
+    if company is None:
+        return "Company not found", 404
+
+    if company.resolve_status != "resolved":
+        from quarry.resolve.pipeline import resolve_company_sync
+
+        company = resolve_company_sync(company, db=db)
+
+    # Mark watchlist entry as active, preserving existing provenance
+    existing_wl = db.get_watchlist_item(user_id=USER_ID, company_id=company.id)
+    db.upsert_watchlist_item(
+        UserWatchlistItem(
+            user_id=USER_ID,  # TODO: replace with auth
+            company_id=company.id,
+            active=True,
+            added_reason=existing_wl.added_reason if existing_wl else "search",
+            crawl_priority=existing_wl.crawl_priority if existing_wl else 5,
+            notes=existing_wl.notes if existing_wl else None,
+        )
+    )
+    return redirect(url_for("ui.companies"))
 
 
 @bp.route("/companies/<int:company_id>/toggle", methods=["POST"])

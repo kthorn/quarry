@@ -873,6 +873,22 @@ class Database:
 
     # ── Watchlist methods ───────────────────────────────────────
 
+    def get_watchlist_item(
+        self, user_id: int, company_id: int
+    ) -> models.UserWatchlistItem | None:
+        from quarry.store.models import UserWatchlistItem as ORMWatchlist
+
+        with session_scope(engine=self.engine) as session:
+            row = session.execute(
+                select(ORMWatchlist).where(
+                    ORMWatchlist.user_id == user_id,
+                    ORMWatchlist.company_id == company_id,
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                return None
+            return models.UserWatchlistItem.model_validate(row, from_attributes=True)
+
     def get_watchlist(
         self,
         user_id: int = 1,
@@ -889,6 +905,49 @@ class Database:
                 models.UserWatchlistItem.model_validate(w, from_attributes=True)
                 for w in result
             ]
+
+    def get_watchlist_companies(
+        self,
+        user_id: int = 1,
+        active: bool | None = None,
+        added_reason: str | None = None,
+    ) -> list[dict]:
+        """Get companies from user's watchlist, joined with company details.
+
+        Returns list of dicts with all company columns + watchlist columns.
+        """
+        from quarry.store.models import Company as ORMCompany
+        from quarry.store.models import UserWatchlistItem as ORMWatchlist
+
+        stmt = (
+            select(
+                ORMCompany.id,
+                ORMCompany.name,
+                ORMCompany.domain,
+                ORMCompany.careers_url,
+                ORMCompany.ats_type,
+                ORMCompany.ats_slug,
+                ORMCompany.resolve_status,
+                ORMCompany.resolve_attempts,
+                ORMCompany.created_at,
+                ORMCompany.updated_at,
+                ORMWatchlist.active,
+                ORMWatchlist.crawl_priority,
+                ORMWatchlist.notes,
+                ORMWatchlist.added_reason,
+            )
+            .join(ORMWatchlist, ORMCompany.id == ORMWatchlist.company_id)
+            .where(ORMWatchlist.user_id == user_id)
+        )
+        if active is not None:
+            stmt = stmt.where(ORMWatchlist.active.is_(active))
+        if added_reason is not None:
+            stmt = stmt.where(ORMWatchlist.added_reason == added_reason)
+        stmt = stmt.order_by(ORMCompany.name)
+
+        with session_scope(engine=self.engine) as session:
+            result = session.execute(stmt).all()
+            return [dict(row._mapping) for row in result]
 
     def upsert_watchlist_item(self, item: models.UserWatchlistItem) -> int:
         """Upsert a watchlist item. Returns lastrowid."""

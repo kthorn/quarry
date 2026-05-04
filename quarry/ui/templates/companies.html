@@ -18,12 +18,12 @@
     <tbody>
         {% for company in active %}
         <tr>
-            <td>{{ company.name }}</td>
-            <td>{{ company.ats_type }}</td>
-            <td>{{ company.domain or "\u2014" }}</td>
-            <td>{% if company.careers_url %}<a href="{{ company.careers_url }}">{{ company.careers_url }}</a>{% else %}\u2014{% endif %}</td>
+            <td>{{ company['name'] }}</td>
+            <td>{{ company['ats_type'] }}</td>
+            <td>{{ company['domain'] or "\u2014" }}</td>
+            <td>{% if company['careers_url'] %}<a href="{{ company['careers_url'] }}">{{ company['careers_url'] }}</a>{% else %}\u2014{% endif %}</td>
             <td>
-                <form method="POST" action="{{ url_for('ui.toggle_company', company_id=company.id) }}" class="inline">
+                <form method="POST" action="{{ url_for('ui.toggle_company', company_id=company['id']) }}" class="inline">
                     <button type="submit" class="small btn-negative">Deactivate</button>
                 </form>
             </td>
@@ -49,11 +49,11 @@
     <tbody>
         {% for company in inactive %}
         <tr>
-            <td>{{ company.name }}</td>
-            <td>{{ company.ats_type }}</td>
-            <td>{{ company.domain or "\u2014" }}</td>
+            <td>{{ company['name'] }}</td>
+            <td>{{ company['ats_type'] }}</td>
+            <td>{{ company['domain'] or "\u2014" }}</td>
             <td>
-                <form method="POST" action="{{ url_for('ui.toggle_company', company_id=company.id) }}" class="inline">
+                <form method="POST" action="{{ url_for('ui.toggle_company', company_id=company['id']) }}" class="inline">
                     <button type="submit" class="small btn-applied">Reactivate</button>
                 </form>
             </td>
@@ -63,5 +63,39 @@
 </table>
 {% else %}
 <p>No inactive companies.</p>
+{% endif %}
+
+<h2>Discovered via Search ({{ discovered|length }})</h2>
+{% if discovered %}
+<table>
+    <thead>
+        <tr>
+            <th>Name</th>
+            <th>Status</th>
+            <th>Domain</th>
+            <th>Careers URL</th>
+            <th>Action</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for company in discovered %}
+        <tr>
+            <td>{{ company['name'] }}</td>
+            <td>{{ company['resolve_status'] }}</td>
+            <td>{{ company['domain'] or "\u2014" }}</td>
+            <td>
+                {% if company['careers_url'] %}<a href="{{ company['careers_url'] }}">{{ company['careers_url'] }}</a>{% else %}\u2014{% endif %}
+            </td>
+            <td>
+                <form method="POST" action="{{ url_for('ui.activate_company', company_id=company['id']) }}" class="inline">
+                    <button type="submit" class="small btn-applied">Activate</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p>No companies discovered via search yet.</p>
 {% endif %}
 {% endblock %}

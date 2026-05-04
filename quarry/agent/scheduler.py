@@ -15,8 +15,15 @@ import numpy as np
 from quarry.config import FiltersConfig, settings
 from quarry.crawlers import get_crawler
 from quarry.crawlers.base import Crawl404Error
-from quarry.crawlers.jobspy_client import JobSpyClient
-from quarry.models import Company, CrawlRun, JobPosting, ParseResult, RawPosting
+from quarry.crawlers.jobspy_client import JobSpyClient, JobSpyCompanyHints
+from quarry.models import (
+    Company,
+    CrawlRun,
+    JobPosting,
+    ParseResult,
+    RawPosting,
+    UserWatchlistItem,
+)
 from quarry.pipeline.embedder import (
     embed_posting,
     get_ideal_embedding,
@@ -66,6 +73,64 @@ def _crawl_company(company: Company) -> list[RawPosting]:
     return result
 
 
+def resolve_or_create_search_company(
+    db: Database,
+    name: str,
+    hints: JobSpyCompanyHints,
+    user_id: int = 1,
+) -> Company:
+    """Look up or create a company in the shared table, and ensure a watchlist entry.
+
+    If the company is new, populate domain/ATS hints from JobSpy metadata.
+    Always adds a user_watchlist entry (active=False, added_reason='search')
+    unless one already exists for this user.
+    """
+    company = db.get_company_by_name(name)
+    if company is None:
+        # Determine ATS type and resolve status from hints
+        ats_type = hints.ats_type_hint or "unknown"
+        ats_slug = hints.ats_slug_hint
+        domain = hints.domain_hint
+        careers_url = hints.build_careers_url()
+
+        # If we detected an ATS from the job URL, mark as resolved
+        resolve_status = "resolved" if hints.ats_type_hint else "unresolved"
+
+        company = Company(
+            name=name,
+            domain=domain,
+            careers_url=careers_url,
+            ats_type=ats_type,  # type: ignore[arg-type]
+            ats_slug=ats_slug,
+            resolve_status=resolve_status,  # type: ignore[arg-type]
+        )
+        company.id = db.insert_company(company)
+        # insert_company auto-creates a watchlist entry with active=True.
+        # Override it: search-discovered companies start inactive.
+        db.upsert_watchlist_item(
+            UserWatchlistItem(
+                user_id=user_id,
+                company_id=company.id,
+                active=False,
+                added_reason="search",
+            )
+        )
+    else:
+        # Company already exists — only add watchlist if not present
+        existing_wl = db.get_watchlist_item(user_id, company.id)
+        if existing_wl is None:
+            db.upsert_watchlist_item(
+                UserWatchlistItem(
+                    user_id=user_id,
+                    company_id=company.id,
+                    active=False,
+                    added_reason="search",
+                )
+            )
+
+    return company
+
+
 def _crawl_search_queries(db: Database, user_id: int = 1) -> list[RawPosting]:
     """Crawl job boards for all active search queries via JobSpy."""
     client = JobSpyClient()
@@ -81,14 +146,18 @@ def _crawl_search_queries(db: Database, user_id: int = 1) -> list[RawPosting]:
     for c in companies:
         seen_companies[c.name.lower()] = c
 
-    def company_resolver(name: str) -> Company:
+    def company_resolver(name: str, hints: JobSpyCompanyHints) -> Company:
         lower = name.lower()
         if lower in seen_companies:
             return seen_companies[lower]
-        new_company = Company(name=name)
-        new_company.id = db.insert_company(new_company, user_id=user_id)
-        seen_companies[lower] = new_company
-        return new_company
+        company = resolve_or_create_search_company(
+            db,
+            name,
+            hints,
+            user_id=user_id,
+        )
+        seen_companies[lower] = company
+        return company
 
     for q in queries:
         log.info("Searching: %s", q.query_text)
@@ -309,6 +378,11 @@ def run_once(db: Database, user_id: int = 1) -> dict:
     search_postings = _crawl_search_queries(db, user_id=user_id)
     total_found += len(search_postings)
     log.info("Phase: processing %d search query results", len(search_postings))
+
+    # Resolve newly discovered companies in the background
+    from quarry.resolve.pipeline import resolve_unresolved_sync
+
+    resolve_unresolved_sync(db, max_concurrent=settings.max_concurrent_per_host)
 
     for raw in search_postings:
         company_name = ""
