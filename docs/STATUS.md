@@ -1,6 +1,6 @@
 # STATUS
 
-Last updated: 2026-05-03 (search-discovered companies; session poison + crawl-run crash fixes)
+Last updated: 2026-05-06 (M5 ranking pipeline implemented)
 
 ## Phase 1 — MVP Progress
 
@@ -10,7 +10,7 @@ Last updated: 2026-05-03 (search-discovered companies; session poison + crawl-ru
 | M2: Crawlers (JobSpy + ATS endpoints)     | **DONE**               | 2026-04-06     |
 | M3: Extraction pipeline                   | **DONE**               | 2026-04-07     |
 | M4: Embedding & similarity filter         | **DONE**               | 2026-04-09     |
-| M5: Agent tool loop & strategy reflection | **NOT STARTED**        | —              |
+| M5: Ranking pipeline & agent tool loop     | **DONE**               | 2026-05-05     |
 | M6: Scheduler (run-once)                  | **DONE** (minimal)     | 2026-04-10     |
 | M7: Daily digest                          | **DONE** (file output) | 2026-04-10     |
 | M8: Labeling UI                           | **DONE**               | 2026-04-14     |
@@ -48,9 +48,12 @@ All refined plans in `docs/plans/completed/`:
 11. `2026-04-12-unified-filter-pipeline.md`
 12. `2026-04-14-m8-labeling-ui.md`
 
+**M5 ranking pipeline** (2026-05-05) — design spec at `docs/superpowers/specs/2026-05-05-m5-ranking-pipeline-design.md`
+
 **Multi-user schema** (all 4 phases complete) — see "Multi-User Architecture" table above and design spec at `docs/multi-user-schema.md`
 
 **Search-discovered companies**: JobSpy-discovered companies created in shared `companies` table with domain/ATS hints from `company_url_direct`/`job_url_direct` URL patterns; linked via inactive `user_watchlist` entries (`active=False, added_reason='search'`); auto-resolved in background with `asyncio.Semaphore`; surfaced in UI "Discovered" section with Activate button
+
 - **NaN bug fix**: JobSpy DataFrame values sanitized via `_safe_str()` before creating companies/postings
 - Plan: `docs/superpowers/plans/2026-04-28-search-discovered-companies.md`
 
@@ -67,16 +70,22 @@ All refined plans in `docs/plans/completed/`:
 - `python -m pytest tests/test_orm.py -v` — **17 ORM tests passing** (Phase 2)
 - `ruff check .` — clean
 - `pyright quarry/` — clean
-- `python -m pytest tests/ -q` — **409 passed, 22 skipped** (0 failures)
+- `python -m pytest tests/ -q` — **442 passed, 22 skipped** (0 failures)
 - **Note:** All four phases complete. All callers use per-user ORM methods with `user_id=1`. `get_recent_postings`/`get_postings_paginated`/`db.execute()` removed. Backward-compat aliases removed from `models.py`.
+- **Ranking pipeline:** `python -m quarry.rank list-scorers` — shows 5 registered scorers
+- **Ranking CLI:** `python -m quarry.rank config get|set`, `python -m quarry.rank train`, `python -m quarry.rank evaluate`, `python -m quarry.rank recompute`
 
 ## Remaining MVP Tasks (from TASKS.md)
 
-### M5: Agent tool loop & strategy reflection (NOT STARTED)
+### M5: Ranking pipeline & agent tool loop (DONE — ranking pipeline)
 
-- [ ] `agent/tools.py` — `get_strategy_summary()`, `get_recent_results(n)`, `retire_company()`, `update_company()`, `add_search_query()`, `retire_search_query()`, `log_observation()`, `trigger_retrain()`
-- [ ] `agent/prompts.py` — system prompt for reflection run with strategy summary template
-- [ ] `agent/agent.py` — `run_strategy_reflection()`: build context, call LLM with tools, execute tool calls in loop, log to `agent_log`
+- [x] `quarry/rank/` — pluggable scorer framework (similarity, keyword, classifier, LLM, weighted avg)
+- [x] `quarry/rank/pipeline.py` — RankingPipeline orchestrator with step reordering
+- [x] `quarry/rank/__main__.py` — CLI: list-scorers, config get/set, train, evaluate, recompute
+- [x] Pipeline configs stored in `pipeline_configs` table; composite scores in `user_ranking_scores`
+- [x] Scheduler integration: ranking phase after crawl, auto-retrain on label threshold
+- [x] Digest integration: uses composite scores with similarity fallback
+- [x] UI: +/- interest buttons on postings, label collection for classifier training
 - [x] `agent/tools.py` — `seed()` entrypoint (DONE)
 - [x] `seed_data.yaml` — initial company list (DONE, 29 companies)
 
@@ -131,6 +140,7 @@ quarry/
 ├── crawlers/       greenhouse, lever, ashby, careers_page, jobspy_client
 ├── digest/         build + write digest file
 ├── pipeline/       extract, embedder, filter (FilterStep classes), locations, search
+├── rank/           ranking pipeline (scorers, config, registry, CLI)
 ├── resolve/        company resolver (domain, ATS detection)
 ├── store/          db.py (ORM CRUD), models.py (ORM Mapped[] classes), session.py (engine + session factory), schema.py (retired)
 ├── config.py       Settings (Pydantic + YAML), FiltersConfig models
@@ -140,4 +150,5 @@ quarry/
 alembic/
 ├── env.py          Alembic environment (targets ORM Base metadata)
 └── versions/       4596e16062f9_initial_multi_user_schema.py
+                   538837880514_add_ranking_pipeline.py
 ```

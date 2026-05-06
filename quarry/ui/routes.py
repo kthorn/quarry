@@ -67,29 +67,42 @@ def postings():
 
 @bp.route("/label/<int:posting_id>", methods=["POST"])
 def label(posting_id):
-    status = request.form.get("status", "")
-    if status not in VALID_STATUSES:
-        return "Invalid status", 400
-
     db = get_db()
     posting = db.get_posting_by_id(posting_id)
     if posting is None:
         return "Posting not found", 404
 
-    db.update_posting_status(posting_id, status, user_id=USER_ID)
+    status = request.form.get("status", "")
+    signal = request.form.get("signal", "")
 
-    notes = request.form.get("notes", "").strip()
-    signal: Literal["applied", "negative", "skip"] = STATUS_TO_SIGNAL.get(
-        status, "skip"
-    )  # type: ignore[assignment]
-    label = UserLabel(
-        user_id=USER_ID,
-        posting_id=posting_id,
-        signal=signal,
-        notes=notes or None,
-        label_source="user",
-    )
-    db.insert_label(label, user_id=USER_ID)
+    # Handle status change (existing behavior)
+    if status and status in VALID_STATUSES:
+        db.update_posting_status(posting_id, status, user_id=USER_ID)
+        # Auto-derive signal from status for backward compat
+        notes = request.form.get("notes", "").strip()
+        derived_signal: Literal["applied", "negative", "skip"] = STATUS_TO_SIGNAL.get(
+            status, "skip"
+        )  # type: ignore[assignment]
+        label = UserLabel(
+            user_id=USER_ID,
+            posting_id=posting_id,
+            signal=derived_signal,
+            notes=notes or None,
+            label_source="user",
+        )
+        db.insert_label(label, user_id=USER_ID)
+    elif signal in ("positive", "negative"):
+        # Interest-only label (no status change)
+        signal_typed: Literal["positive", "negative"] = signal  # type: ignore[assignment]
+        label = UserLabel(
+            user_id=USER_ID,
+            posting_id=posting_id,
+            signal=signal_typed,
+            label_source="user",
+        )
+        db.insert_label(label, user_id=USER_ID)
+    else:
+        return "Invalid status or signal", 400
 
     return_status = request.args.get("return_status", "new")
     return redirect(url_for("ui.postings", status=return_status))

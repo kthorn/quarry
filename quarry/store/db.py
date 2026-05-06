@@ -452,6 +452,7 @@ class Database:
 
     def insert_label(self, label: models.UserLabel, user_id: int = 1) -> int:
         from quarry.store.models import UserLabel as ORMLabel
+        from quarry.store.models import UserSetting as ORMUserSetting
 
         with session_scope(engine=self.engine) as session:
             orm_label = ORMLabel(
@@ -463,7 +464,67 @@ class Database:
             )
             session.add(orm_label)
             session.flush()
-            return orm_label.id
+            label_id = orm_label.id
+
+            # Increment labels_since_last_train counter for interest signals
+            if label.signal in ("positive", "negative"):
+                actual_user_id = label.user_id if label.user_id is not None else user_id
+
+                # Read current counter (default "0" if missing)
+                row = session.execute(
+                    select(ORMUserSetting.value).where(
+                        ORMUserSetting.user_id == actual_user_id,
+                        ORMUserSetting.key == "labels_since_last_train",
+                    )
+                ).scalar_one_or_none()
+                current = int(row) if row and row.isdigit() else 0
+                new_count = current + 1
+
+                # Read threshold (default 20)
+                threshold_row = session.execute(
+                    select(ORMUserSetting.value).where(
+                        ORMUserSetting.user_id == actual_user_id,
+                        ORMUserSetting.key == "retrain_label_threshold",
+                    )
+                ).scalar_one_or_none()
+                threshold = (
+                    int(threshold_row)
+                    if threshold_row and threshold_row.isdigit()
+                    else 20
+                )
+
+                # Upsert counter
+                session.execute(
+                    sqlite_insert(ORMUserSetting)
+                    .values(
+                        user_id=actual_user_id,
+                        key="labels_since_last_train",
+                        value=str(new_count),
+                        updated_at=func.now(),
+                    )
+                    .on_conflict_do_update(
+                        index_elements=["user_id", "key"],
+                        set_=dict(value=str(new_count), updated_at=func.now()),
+                    )
+                )
+
+                # Set retrain_pending if threshold reached
+                if new_count >= threshold:
+                    session.execute(
+                        sqlite_insert(ORMUserSetting)
+                        .values(
+                            user_id=actual_user_id,
+                            key="retrain_pending",
+                            value="true",
+                            updated_at=func.now(),
+                        )
+                        .on_conflict_do_update(
+                            index_elements=["user_id", "key"],
+                            set_=dict(value="true", updated_at=func.now()),
+                        )
+                    )
+
+            return label_id
 
     def get_labels_for_posting(
         self, posting_id: int, user_id: int = 1
@@ -740,10 +801,24 @@ class Database:
     ) -> list[dict]:
         from quarry.store.models import Company as ORMCompany
         from quarry.store.models import JobPosting as ORMPosting
+        from quarry.store.models import PipelineConfig as ORMPipelineConfig
         from quarry.store.models import UserClassifierScore as ORMClsScore
         from quarry.store.models import UserEnrichedPosting as ORMEnriched
         from quarry.store.models import UserPostingStatus as ORMStatus
+        from quarry.store.models import UserRankingScore as ORMRankScore
         from quarry.store.models import UserSimilarityScore as ORMSimScore
+
+        # Find the active pipeline config for this user
+        active_config_id = None
+        with session_scope(engine=self.engine) as lookup_session:
+            config_row = lookup_session.execute(
+                select(ORMPipelineConfig.id).where(
+                    ORMPipelineConfig.user_id == user_id,
+                    ORMPipelineConfig.is_active.is_(True),
+                )
+            ).scalar_one_or_none()
+            if config_row is not None:
+                active_config_id = config_row
 
         stmt = (
             select(
@@ -768,6 +843,9 @@ class Database:
                 func.coalesce(ORMEnriched.fit_score, 0).label("fit_score"),
                 ORMEnriched.role_tier,
                 ORMEnriched.fit_reason,
+                func.coalesce(ORMRankScore.composite_score, 0.0).label(
+                    "composite_score"
+                ),
             )
             .join(ORMCompany, ORMPosting.company_id == ORMCompany.id)
             .outerjoin(
@@ -800,6 +878,17 @@ class Database:
             )
         )
 
+        # Only join ranking scores if there's an active config
+        if active_config_id is not None:
+            stmt = stmt.outerjoin(
+                ORMRankScore,
+                and_(
+                    ORMPosting.id == ORMRankScore.posting_id,
+                    ORMRankScore.user_id == user_id,
+                    ORMRankScore.pipeline_config_id == active_config_id,
+                ),
+            )
+
         if status == "new":
             stmt = stmt.where(
                 or_(
@@ -810,8 +899,15 @@ class Database:
         else:
             stmt = stmt.where(ORMStatus.status == status)
 
+        # Order by composite_score (ranking pipeline) falling back to similarity
         stmt = (
-            stmt.order_by(func.coalesce(ORMSimScore.similarity_score, 0.0).desc())
+            stmt.order_by(
+                func.coalesce(
+                    ORMRankScore.composite_score,
+                    ORMSimScore.similarity_score,
+                    0.0,
+                ).desc()
+            )
             .limit(limit)
             .offset(offset)
         )
@@ -999,6 +1095,221 @@ class Database:
                     set_=dict(value=value, updated_at=func.now()),
                 )
             )
+
+    # ── Ranking pipeline methods ───────────────────────────────
+
+    def get_similarity_score(self, user_id: int, posting_id: int) -> float | None:
+        """Look up a single similarity score for SimilarityScorer."""
+        from quarry.store.models import UserSimilarityScore as ORMSimScore
+
+        with session_scope(engine=self.engine) as session:
+            result = session.execute(
+                select(ORMSimScore.similarity_score).where(
+                    ORMSimScore.user_id == user_id,
+                    ORMSimScore.posting_id == posting_id,
+                )
+            ).scalar_one_or_none()
+            return result
+
+    def get_enriched_posting(
+        self, user_id: int, posting_id: int
+    ) -> models.UserEnrichedPosting | None:
+        """Look up a single enriched posting for LLMEnrichmentScorer."""
+        from quarry.store.models import UserEnrichedPosting as ORMEnriched
+
+        with session_scope(engine=self.engine) as session:
+            row = session.execute(
+                select(ORMEnriched).where(
+                    ORMEnriched.user_id == user_id,
+                    ORMEnriched.posting_id == posting_id,
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                return None
+            enriched = models.UserEnrichedPosting.model_validate(
+                row, from_attributes=True
+            )
+            # Deserialize key_requirements from JSON string
+            if enriched.key_requirements and isinstance(enriched.key_requirements, str):
+                import json
+
+                try:
+                    enriched.key_requirements = json.loads(enriched.key_requirements)
+                except json.JSONDecodeError:
+                    pass
+            return enriched
+
+    def save_enriched_posting(
+        self,
+        user_id: int,
+        posting_id: int,
+        fit_score: float,
+        role_tier: str | None = None,
+        fit_reason: str | None = None,
+        key_requirements: list[str] | None = None,
+    ) -> None:
+        """Save an LLM enrichment result."""
+        import json
+
+        from quarry.store.models import UserEnrichedPosting as ORMEnriched
+
+        key_reqs_json = json.dumps(key_requirements) if key_requirements else None
+        with session_scope(engine=self.engine) as session:
+            session.execute(
+                sqlite_insert(ORMEnriched)
+                .values(
+                    user_id=user_id,
+                    posting_id=posting_id,
+                    fit_score=int(fit_score),
+                    role_tier=role_tier,
+                    fit_reason=fit_reason,
+                    key_requirements=key_reqs_json,
+                )
+                .on_conflict_do_update(
+                    index_elements=["user_id", "posting_id"],
+                    set_=dict(
+                        fit_score=int(fit_score),
+                        role_tier=role_tier,
+                        fit_reason=fit_reason,
+                        key_requirements=key_reqs_json,
+                        enriched_at=func.now(),
+                    ),
+                )
+            )
+
+    def get_labels_with_postings(self, user_id: int = 1) -> list[tuple]:
+        """Fetch all user labels with posting embeddings for classifier training.
+
+        Returns list of (UserLabel, JobPosting) tuples. Both are ORM objects.
+        """
+        from quarry.store.models import JobPosting as ORMPosting
+        from quarry.store.models import UserLabel as ORMLabel
+
+        with session_scope(engine=self.engine) as session:
+            result = session.execute(
+                select(ORMLabel, ORMPosting.embedding, ORMPosting.id)
+                .join(ORMPosting, ORMLabel.posting_id == ORMPosting.id)
+                .where(
+                    ORMLabel.user_id == user_id,
+                    ORMLabel.signal.in_(["positive", "negative"]),
+                )
+            ).all()
+            return [(row[0], row[1], row[2]) for row in result]
+
+    def upsert_ranking_score(
+        self,
+        user_id: int,
+        posting_id: int,
+        pipeline_config_id: int,
+        composite_score: float,
+        component_scores: dict[str, float] | None = None,
+    ) -> None:
+        """Insert or update a composite ranking score."""
+        import json
+
+        from quarry.store.models import UserRankingScore as ORMRankScore
+
+        components_json = json.dumps(component_scores) if component_scores else None
+        with session_scope(engine=self.engine) as session:
+            session.execute(
+                sqlite_insert(ORMRankScore)
+                .values(
+                    user_id=user_id,
+                    posting_id=posting_id,
+                    pipeline_config_id=pipeline_config_id,
+                    composite_score=composite_score,
+                    component_scores=components_json,
+                )
+                .on_conflict_do_update(
+                    index_elements=["user_id", "posting_id", "pipeline_config_id"],
+                    set_=dict(
+                        composite_score=composite_score,
+                        component_scores=components_json,
+                        computed_at=func.now(),
+                    ),
+                )
+            )
+
+    def get_active_pipeline_config(self, user_id: int = 1):
+        """Return the active RankingConfig for a user, or None."""
+        from quarry.rank.config import RankingConfig
+        from quarry.store.models import PipelineConfig as ORMPipelineConfig
+
+        with session_scope(engine=self.engine) as session:
+            row = session.execute(
+                select(ORMPipelineConfig).where(
+                    ORMPipelineConfig.user_id == user_id,
+                    ORMPipelineConfig.is_active.is_(True),
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                return None
+            config = RankingConfig.model_validate_json(row.config_json)
+            config.id = row.id
+            return config
+
+    def insert_pipeline_config(
+        self,
+        user_id: int,
+        config,
+        description: str | None = None,
+    ) -> int:
+        """Insert a new pipeline config, deactivating others for this user.
+
+        Args:
+            user_id: User to save the config for.
+            config: RankingConfig instance to serialize.
+            description: Optional human-readable label.
+
+        Returns:
+            The new PipelineConfig row ID.
+        """
+        import hashlib
+
+        from quarry.store.models import PipelineConfig as ORMPipelineConfig
+
+        config_json = config.model_dump_json(exclude={"id"})
+        config_hash = hashlib.sha256(config_json.encode()).hexdigest()[:16]
+
+        with session_scope(engine=self.engine) as session:
+            # Deactivate all existing active configs for this user
+            session.execute(
+                update(ORMPipelineConfig)
+                .where(
+                    ORMPipelineConfig.user_id == user_id,
+                    ORMPipelineConfig.is_active.is_(True),
+                )
+                .values(is_active=False)
+            )
+
+            new_row = ORMPipelineConfig(
+                user_id=user_id,
+                config_hash=config_hash,
+                config_json=config_json,
+                description=description,
+                is_active=True,
+            )
+            session.add(new_row)
+            session.flush()
+            return new_row.id
+
+    def get_ranking_config_draft(self, user_id: int = 1):
+        """Load the draft RankingConfig from user_settings, falling back to default."""
+        import logging
+
+        from quarry.rank.config import RankingConfig, get_default_config
+
+        log = logging.getLogger(__name__)
+        settings_raw = self.get_user_settings_raw(user_id)
+        draft_json = settings_raw.get("ranking_config")
+        if draft_json:
+            try:
+                return RankingConfig.model_validate_json(draft_json)
+            except Exception as exc:
+                log.warning(
+                    "Invalid ranking_config draft for user %d: %s", user_id, exc
+                )
+        return get_default_config()
 
 
 # ── Module-level helpers ───────────────────────────────────────
