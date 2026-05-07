@@ -28,9 +28,7 @@ block content %}
   </div>
   <div class="card-meta">
     {% set display_score = row.composite_score or row.similarity_score or 0 %}
-    <span class="score"
-      >score: {{ "%.3f"|format(display_score) }}</span
-    >
+    <span class="score">score: {{ "%.3f"|format(display_score) }}</span>
   </div>
   {% if row.description %}
   <details>
@@ -45,7 +43,9 @@ block content %}
       class="inline"
     >
       <input type="hidden" name="signal" value="positive" />
-      <button type="submit" class="small btn-positive">&#x1F44D; Interested</button>
+      <button type="submit" class="small btn-positive">
+        &#x1F44D; Interested
+      </button>
     </form>
     <form
       method="POST"
@@ -53,7 +53,9 @@ block content %}
       class="inline"
     >
       <input type="hidden" name="signal" value="negative" />
-      <button type="submit" class="small btn-negative">&#x1F44E; Not Interested</button>
+      <button type="submit" class="small btn-negative">
+        &#x1F44E; Not Interested
+      </button>
     </form>
     <form
       method="POST"

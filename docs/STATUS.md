@@ -4,16 +4,16 @@ Last updated: 2026-05-06 (M5 ranking pipeline implemented)
 
 ## Phase 1 — MVP Progress
 
-| Milestone                                 | Status                 | Completed Plan |
-| ----------------------------------------- | ---------------------- | -------------- |
-| M1: Project scaffolding & database        | **DONE**               | 2026-04-05     |
-| M2: Crawlers (JobSpy + ATS endpoints)     | **DONE**               | 2026-04-06     |
-| M3: Extraction pipeline                   | **DONE**               | 2026-04-07     |
-| M4: Embedding & similarity filter         | **DONE**               | 2026-04-09     |
-| M5: Ranking pipeline & agent tool loop     | **DONE**               | 2026-05-05     |
-| M6: Scheduler (run-once)                  | **DONE** (minimal)     | 2026-04-10     |
-| M7: Daily digest                          | **DONE** (file output) | 2026-04-10     |
-| M8: Labeling UI                           | **DONE**               | 2026-04-14     |
+| Milestone                              | Status                 | Completed Plan |
+| -------------------------------------- | ---------------------- | -------------- |
+| M1: Project scaffolding & database     | **DONE**               | 2026-04-05     |
+| M2: Crawlers (JobSpy + ATS endpoints)  | **DONE**               | 2026-04-06     |
+| M3: Extraction pipeline                | **DONE**               | 2026-04-07     |
+| M4: Embedding & similarity filter      | **DONE**               | 2026-04-09     |
+| M5: Ranking pipeline & agent tool loop | **DONE**               | 2026-05-05     |
+| M6: Scheduler (run-once)               | **DONE** (minimal)     | 2026-04-10     |
+| M7: Daily digest                       | **DONE** (file output) | 2026-04-10     |
+| M8: Labeling UI                        | **DONE**               | 2026-04-14     |
 
 ## Additional Work (Beyond TASKS.md)
 
