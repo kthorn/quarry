@@ -15,14 +15,14 @@ log = logging.getLogger(__name__)
 
 
 def build_digest(db: Database, limit: int | None = None) -> list[dict]:
-    """Fetch new postings sorted by similarity score.
+    """Fetch new postings sorted by composite score (falling back to similarity).
 
     Args:
         db: Database instance.
         limit: Maximum postings to include. Defaults to config digest_top_n.
 
     Returns:
-        List of dicts with posting data, sorted by similarity_score descending.
+        List of dicts with posting data, sorted by ranking score descending.
     """
     limit = limit or settings.digest_top_n
     rows = db.get_postings_with_scores(status="new", limit=limit, offset=0)
@@ -33,6 +33,7 @@ def build_digest(db: Database, limit: int | None = None) -> list[dict]:
             "title": row["title"],
             "url": row["url"],
             "similarity_score": row["similarity_score"],
+            "composite_score": row["composite_score"],
             "location": row["location"] or "N/A",
             "work_model": row["work_model"],
         }
@@ -61,7 +62,8 @@ def format_digest(entries: list[dict]) -> str:
     for i, e in enumerate(entries, 1):
         wm = e.get("work_model")
         work_tag = f" [{wm.title()}]" if wm else ""
-        score_tag = f" (score: {e['similarity_score']:.3f})"
+        score = e.get("composite_score") or e.get("similarity_score", 0)
+        score_tag = f" (score: {score:.3f})"
         lines.append(f"{i}. {e['title']} at {e['company_name']}{work_tag}{score_tag}")
         lines.append(f"   {e['location']}")
         lines.append(f"   {e['url']}")

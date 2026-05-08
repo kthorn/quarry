@@ -15,8 +15,15 @@ import numpy as np
 from quarry.config import FiltersConfig, settings
 from quarry.crawlers import get_crawler
 from quarry.crawlers.base import Crawl404Error
-from quarry.crawlers.jobspy_client import JobSpyClient
-from quarry.models import Company, CrawlRun, JobPosting, ParseResult, RawPosting
+from quarry.crawlers.jobspy_client import JobSpyClient, JobSpyCompanyHints
+from quarry.models import (
+    Company,
+    CrawlRun,
+    JobPosting,
+    ParseResult,
+    RawPosting,
+    UserWatchlistItem,
+)
 from quarry.pipeline.embedder import (
     embed_posting,
     get_ideal_embedding,
@@ -66,6 +73,65 @@ def _crawl_company(company: Company) -> list[RawPosting]:
     return result
 
 
+def resolve_or_create_search_company(
+    db: Database,
+    name: str,
+    hints: JobSpyCompanyHints,
+    user_id: int = 1,
+) -> Company:
+    """Look up or create a company in the shared table, and ensure a watchlist entry.
+
+    If the company is new, populate domain/ATS hints from JobSpy metadata.
+    Always adds a user_watchlist entry (active=False, added_reason='search')
+    unless one already exists for this user.
+    """
+    company = db.get_company_by_name(name)
+    if company is None:
+        # Determine ATS type and resolve status from hints
+        ats_type = hints.ats_type_hint or "unknown"
+        ats_slug = hints.ats_slug_hint
+        domain = hints.domain_hint
+        careers_url = hints.build_careers_url()
+
+        # If we detected an ATS from the job URL, mark as resolved
+        resolve_status = "resolved" if hints.ats_type_hint else "unresolved"
+
+        company = Company(
+            name=name,
+            domain=domain,
+            careers_url=careers_url,
+            ats_type=ats_type,  # type: ignore[arg-type]
+            ats_slug=ats_slug,
+            resolve_status=resolve_status,  # type: ignore[arg-type]
+        )
+        company.id = db.insert_company(company)
+        # insert_company auto-creates a watchlist entry with active=True.
+        # Override it: search-discovered companies start inactive.
+        db.upsert_watchlist_item(
+            UserWatchlistItem(
+                user_id=user_id,
+                company_id=company.id,
+                active=False,
+                added_reason="search",
+            )
+        )
+    else:
+        # Company already exists — only add watchlist if not present
+        assert company.id is not None
+        existing_wl = db.get_watchlist_item(user_id, company.id)
+        if existing_wl is None:
+            db.upsert_watchlist_item(
+                UserWatchlistItem(
+                    user_id=user_id,
+                    company_id=company.id,
+                    active=False,
+                    added_reason="search",
+                )
+            )
+
+    return company
+
+
 def _crawl_search_queries(db: Database, user_id: int = 1) -> list[RawPosting]:
     """Crawl job boards for all active search queries via JobSpy."""
     client = JobSpyClient()
@@ -81,14 +147,18 @@ def _crawl_search_queries(db: Database, user_id: int = 1) -> list[RawPosting]:
     for c in companies:
         seen_companies[c.name.lower()] = c
 
-    def company_resolver(name: str) -> Company:
+    def company_resolver(name: str, hints: JobSpyCompanyHints) -> Company:
         lower = name.lower()
         if lower in seen_companies:
             return seen_companies[lower]
-        new_company = Company(name=name)
-        new_company.id = db.insert_company(new_company, user_id=user_id)
-        seen_companies[lower] = new_company
-        return new_company
+        company = resolve_or_create_search_company(
+            db,
+            name,
+            hints,
+            user_id=user_id,
+        )
+        seen_companies[lower] = company
+        return company
 
     for q in queries:
         log.info("Searching: %s", q.query_text)
@@ -301,11 +371,19 @@ def run_once(db: Database, user_id: int = 1) -> dict:
             run.postings_found = 0
             run.postings_new = 0
 
-        db.insert_crawl_run(run)
+        try:
+            db.insert_crawl_run(run)
+        except Exception as e:
+            log.error("Failed to record crawl run for %s: %s", company.name, e)
 
     search_postings = _crawl_search_queries(db, user_id=user_id)
     total_found += len(search_postings)
     log.info("Phase: processing %d search query results", len(search_postings))
+
+    # Resolve newly discovered companies in the background
+    from quarry.resolve.pipeline import resolve_unresolved_sync
+
+    resolve_unresolved_sync(db, max_concurrent=settings.max_concurrent_per_host)
 
     for raw in search_postings:
         company_name = ""
@@ -343,6 +421,116 @@ def run_once(db: Database, user_id: int = 1) -> dict:
             total_filtered += 1
 
     log_file.close()
+
+    # ── Ranking pipeline phase ──────────────────────────────────
+    if total_new > 0:
+        log.info("Phase: running ranking pipeline on %d new postings", total_new)
+        try:
+            from quarry.rank.pipeline import RankingPipeline
+
+            pipeline = RankingPipeline.load_for_user(db, user_id=user_id)
+            if pipeline.config.id is not None:
+                # Score all new postings
+                new_postings = db.get_postings_with_scores(
+                    user_id=user_id, status="new", limit=total_new + 100
+                )
+                scored = 0
+                for posting_row in new_postings:
+                    posting_id = posting_row["id"]
+                    result = pipeline.run(posting_id)
+                    if not result.context.dropped:
+                        db.upsert_ranking_score(
+                            user_id=user_id,
+                            posting_id=posting_id,
+                            pipeline_config_id=pipeline.config.id,
+                            composite_score=result.context.final_score,
+                            component_scores=result.context.scores,
+                        )
+                        scored += 1
+                log.info("Ranking pipeline scored %d postings", scored)
+            else:
+                log.info("No active pipeline config; skipping ranking phase")
+        except Exception:
+            log.exception("Ranking pipeline phase failed")
+
+    # ── Retraining phase ────────────────────────────────────────
+    try:
+        settings_raw = db.get_user_settings_raw(user_id)
+        retrain_pending = settings_raw.get("retrain_pending", "false")
+        if retrain_pending == "true":
+            log.info("Phase: retraining classifier")
+            from types import SimpleNamespace
+
+            from quarry.pipeline.embedder import (
+                deserialize_embedding,
+                get_embedding_dim,
+            )
+            from quarry.rank.scorers.classifier import ClassifierScorer
+
+            rows = db.get_labels_with_postings(user_id=user_id)
+            if rows:
+                valid_labels = []
+                valid_postings = []
+                dim = get_embedding_dim()
+                for row in rows:
+                    label, emb_bytes, posting_id = row
+                    if emb_bytes is None:
+                        continue
+                    try:
+                        emb = deserialize_embedding(emb_bytes, dim)
+                    except (ValueError, TypeError):
+                        continue
+                    posting = SimpleNamespace(embedding=emb, id=posting_id)
+                    valid_postings.append(posting)
+                    valid_labels.append(label)
+
+                if len(valid_labels) >= 20:
+                    scorer = ClassifierScorer(min_training_labels=20)
+                    metrics = scorer.fit(valid_labels, valid_postings)
+                    if metrics:
+                        # Persist ClassifierVersion
+                        import pickle
+
+                        from sqlalchemy import update
+
+                        from quarry.store.models import ClassifierVersion as ORMClsVer
+                        from quarry.store.session import session_scope
+
+                        with session_scope(engine=db.engine) as session:
+                            version = ORMClsVer(
+                                training_samples=metrics["training_samples"],
+                                positive_samples=metrics["positive_samples"],
+                                negative_samples=metrics["negative_samples"],
+                                cv_accuracy=metrics["cv_auc_mean"],
+                                cv_precision=None,
+                                cv_recall=None,
+                                active=True,
+                            )
+                            session.add(version)
+                            session.flush()
+                            v_id = version.id
+                            session.execute(
+                                update(ORMClsVer)
+                                .where(ORMClsVer.id != v_id)
+                                .values(active=False)
+                            )
+                            models_dir = Path("quarry/models")
+                            models_dir.mkdir(parents=True, exist_ok=True)
+                            model_path = (
+                                models_dir / f"classifier_{user_id}_v{v_id}.pkl"
+                            )
+                            with open(model_path, "wb") as f:
+                                pickle.dump(scorer.model, f)
+                            version.model_path = str(model_path)
+
+                        db.save_user_setting(user_id, "labels_since_last_train", "0")
+                        db.save_user_setting(user_id, "retrain_pending", "false")
+                        log.info("Classifier retrained: %s", metrics)
+            else:
+                log.info("No labeled postings; skipping retraining")
+    except Exception:
+        log.exception("Retraining phase failed")
+
     summary = {
         "companies_crawled": companies_crawled,
         "companies_errored": companies_errored,

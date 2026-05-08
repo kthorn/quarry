@@ -1274,3 +1274,35 @@ def test_get_setting_and_set_setting(db):
     # Overwrite
     db.set_setting("test_key", "new_value")
     assert db.get_setting("test_key") == "new_value"
+
+
+def test_get_watchlist_companies_filters_discovered(db):
+    from quarry.models import Company, UserWatchlistItem
+
+    # Create two companies, one seed (active), one search (inactive)
+    c1 = Company(name="SeedCo")
+    c2 = Company(name="SearchCo")
+    c1.id = db.insert_company(c1)
+    c2.id = db.insert_company(c2)
+
+    # Override insert_company defaults: SeedCo stays active/seed
+    db.upsert_watchlist_item(
+        UserWatchlistItem(user_id=1, company_id=c1.id, active=True, added_reason="seed")
+    )
+    db.upsert_watchlist_item(
+        UserWatchlistItem(
+            user_id=1, company_id=c2.id, active=False, added_reason="search"
+        )
+    )
+
+    # Active only
+    active = db.get_watchlist_companies(user_id=1, active=True)
+    assert len(active) == 1
+    assert active[0]["name"] == "SeedCo"
+
+    # Inactive search-discovered only
+    discovered = db.get_watchlist_companies(
+        user_id=1, active=False, added_reason="search"
+    )
+    assert len(discovered) == 1
+    assert discovered[0]["name"] == "SearchCo"

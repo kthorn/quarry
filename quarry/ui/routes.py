@@ -2,7 +2,7 @@ from typing import Literal
 
 from flask import Blueprint, current_app, redirect, render_template, request, url_for
 
-from quarry.models import UserLabel
+from quarry.models import UserLabel, UserWatchlistItem
 from quarry.store.db import Database
 
 bp = Blueprint("ui", __name__, template_folder="templates")
@@ -67,29 +67,42 @@ def postings():
 
 @bp.route("/label/<int:posting_id>", methods=["POST"])
 def label(posting_id):
-    status = request.form.get("status", "")
-    if status not in VALID_STATUSES:
-        return "Invalid status", 400
-
     db = get_db()
     posting = db.get_posting_by_id(posting_id)
     if posting is None:
         return "Posting not found", 404
 
-    db.update_posting_status(posting_id, status, user_id=USER_ID)
+    status = request.form.get("status", "")
+    signal = request.form.get("signal", "")
 
-    notes = request.form.get("notes", "").strip()
-    signal: Literal["applied", "negative", "skip"] = STATUS_TO_SIGNAL.get(
-        status, "skip"
-    )  # type: ignore[assignment]
-    label = UserLabel(
-        user_id=USER_ID,
-        posting_id=posting_id,
-        signal=signal,
-        notes=notes or None,
-        label_source="user",
-    )
-    db.insert_label(label, user_id=USER_ID)
+    # Handle status change (existing behavior)
+    if status and status in VALID_STATUSES:
+        db.update_posting_status(posting_id, status, user_id=USER_ID)
+        # Auto-derive signal from status for backward compat
+        notes = request.form.get("notes", "").strip()
+        derived_signal: Literal["applied", "negative", "skip"] = STATUS_TO_SIGNAL.get(
+            status, "skip"
+        )  # type: ignore[assignment]
+        label = UserLabel(
+            user_id=USER_ID,
+            posting_id=posting_id,
+            signal=derived_signal,
+            notes=notes or None,
+            label_source="user",
+        )
+        db.insert_label(label, user_id=USER_ID)
+    elif signal in ("positive", "negative"):
+        # Interest-only label (no status change)
+        signal_typed: Literal["positive", "negative"] = signal  # type: ignore[assignment]
+        label = UserLabel(
+            user_id=USER_ID,
+            posting_id=posting_id,
+            signal=signal_typed,
+            label_source="user",
+        )
+        db.insert_label(label, user_id=USER_ID)
+    else:
+        return "Invalid status or signal", 400
 
     return_status = request.args.get("return_status", "new")
     return redirect(url_for("ui.postings", status=return_status))
@@ -98,22 +111,58 @@ def label(posting_id):
 @bp.route("/companies")
 def companies():
     db = get_db()
-    watchlist = db.get_watchlist(user_id=USER_ID, active_only=False)
-    active_items = [w for w in watchlist if w.active]
-    inactive_items = [w for w in watchlist if not w.active]
 
-    active = []
-    for wi in active_items:
-        c = db.get_company(wi.company_id)
-        if c:
-            active.append(c)
-    inactive = []
-    for wi in inactive_items:
-        c = db.get_company(wi.company_id)
-        if c:
-            inactive.append(c)
+    # Active companies (watchlist where active=True)
+    active = db.get_watchlist_companies(user_id=USER_ID, active=True)
 
-    return render_template("companies.html", active=active, inactive=inactive)
+    # Inactive non-search companies (e.g., manually deactivated)
+    inactive = [
+        c
+        for c in db.get_watchlist_companies(user_id=USER_ID, active=False)
+        if c.get("added_reason") != "search"
+    ]
+
+    # Discovered via search (watchlist where active=False, added_reason="search")
+    discovered = db.get_watchlist_companies(
+        user_id=USER_ID, active=False, added_reason="search"
+    )
+
+    return render_template(
+        "companies.html",
+        active=active,
+        inactive=inactive,
+        discovered=discovered,
+    )
+
+
+@bp.route("/companies/<int:company_id>/activate", methods=["POST"])
+def activate_company(company_id):
+    """Activate a discovered company, resolving it first if needed."""
+    db = get_db()
+    company = db.get_company(company_id)
+    if company is None:
+        return "Company not found", 404
+    assert company.id is not None
+
+    if company.resolve_status != "resolved":
+        from quarry.resolve.pipeline import resolve_company_sync
+
+        company = resolve_company_sync(company, db=db)
+    assert company.id is not None
+
+    # Mark watchlist entry as active, preserving existing provenance
+    existing_wl = db.get_watchlist_item(user_id=USER_ID, company_id=company.id)
+    db.upsert_watchlist_item(
+        UserWatchlistItem(
+            user_id=USER_ID,  # TODO: replace with auth
+            company_id=company.id,
+            active=True,
+            added_reason=existing_wl.added_reason if existing_wl else "search",
+            crawl_priority=existing_wl.crawl_priority if existing_wl else 5,
+            notes=existing_wl.notes if existing_wl else None,
+        )
+    )
+    return redirect(url_for("ui.companies"))
 
 
 @bp.route("/companies/<int:company_id>/toggle", methods=["POST"])

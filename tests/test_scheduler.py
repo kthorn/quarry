@@ -3,13 +3,18 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
-from quarry.agent.scheduler import _process_posting, run_once
+from quarry.agent.scheduler import (
+    _process_posting,
+    resolve_or_create_search_company,
+    run_once,
+)
 from quarry.config import (
     CompanyFilterConfig,
     FiltersConfig,
     KeywordBlocklistConfig,
 )
-from quarry.models import Company, RawPosting
+from quarry.crawlers.jobspy_client import JobSpyCompanyHints
+from quarry.models import Company, RawPosting, UserWatchlistItem
 from quarry.pipeline.embedder import set_ideal_embedding
 from quarry.store.db import init_db
 
@@ -176,3 +181,61 @@ class TestProcessPosting:
             raw, db, "TestCorp", None, ideal_embedding
         )
         assert status2 == "duplicate"
+
+
+class TestResolveOrCreateSearchCompany:
+    def test_creates_company_in_shared_table(self, db):
+        hints = JobSpyCompanyHints(
+            domain_hint=None, ats_type_hint=None, ats_slug_hint=None
+        )
+        result = resolve_or_create_search_company(db, "NovelCo", hints, user_id=1)
+
+        assert result.name == "NovelCo"
+        assert result.resolve_status == "unresolved"
+
+        # Verify in shared table
+        fetched = db.get_company_by_name("NovelCo")
+        assert fetched is not None
+
+        # Verify watchlist entry
+        wl = db.get_watchlist_item(1, result.id)
+        assert wl is not None
+        assert wl.active is False
+        assert wl.added_reason == "search"
+
+    def test_uses_hints(self, db):
+        hints = JobSpyCompanyHints(
+            domain_hint="acme.com",
+            ats_type_hint="greenhouse",
+            ats_slug_hint="acme",
+        )
+        result = resolve_or_create_search_company(db, "Acme", hints, user_id=1)
+
+        assert result.domain == "acme.com"
+        assert result.ats_type == "greenhouse"
+        assert result.ats_slug == "acme"
+        assert result.resolve_status == "resolved"
+        assert result.careers_url == "https://boards.greenhouse.io/acme"
+
+    def test_returns_existing_does_not_overwrite_watchlist(self, db):
+        company = Company(name="ExistingCo")
+        company.id = db.insert_company(company)
+
+        # Seed company already in watchlist (active)
+        db.upsert_watchlist_item(
+            UserWatchlistItem(
+                user_id=1, company_id=company.id, active=True, added_reason="seed"
+            )
+        )
+
+        hints = JobSpyCompanyHints(
+            domain_hint=None, ats_type_hint=None, ats_slug_hint=None
+        )
+        result = resolve_or_create_search_company(db, "ExistingCo", hints, user_id=1)
+
+        assert result.id == company.id
+
+        # Watchlist should NOT be overwritten to inactive/search
+        wl = db.get_watchlist_item(1, company.id)
+        assert wl.active is True
+        assert wl.added_reason == "seed"

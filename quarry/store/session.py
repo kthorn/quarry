@@ -8,6 +8,7 @@ Provides:
 - PRAGMA foreign_keys = ON enforced on every connection
 """
 
+import logging
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Generator
@@ -16,6 +17,8 @@ from sqlalchemy import Engine, create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 
 from quarry.store.models import _pragma_foreign_keys_on
+
+log = logging.getLogger(__name__)
 
 _engines: dict[str, Engine] = {}
 _SessionLocal: sessionmaker | None = None
@@ -68,6 +71,20 @@ def get_session() -> Session:
     return _SessionLocal()
 
 
+def _invalidate_connection(session: Session) -> None:
+    """Invalidate the connection after an error so the pool creates a fresh one.
+
+    Without this, SingletonThreadPool hands the same poisoned connection
+    to the next session, causing cascading failures.
+    """
+    try:
+        conn = session.connection()
+        conn.invalidate()
+        log.debug("Invalidated connection after error")
+    except Exception:
+        log.debug("Could not invalidate connection (already broken)", exc_info=True)
+
+
 @contextmanager
 def session_scope(engine: Engine | None = None) -> Generator[Session, None, None]:
     """Context manager for transactional session scope.
@@ -92,6 +109,7 @@ def session_scope(engine: Engine | None = None) -> Generator[Session, None, None
         session.commit()
     except Exception:
         session.rollback()
+        _invalidate_connection(session)
         raise
     finally:
         session.close()

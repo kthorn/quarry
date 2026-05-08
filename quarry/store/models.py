@@ -124,6 +124,9 @@ class JobPosting(Base):
     enriched_entries: Mapped[list["UserEnrichedPosting"]] = relationship(
         back_populates="posting", cascade="all, delete-orphan"
     )
+    ranking_scores: Mapped[list["UserRankingScore"]] = relationship(
+        back_populates="posting", cascade="all, delete-orphan"
+    )
 
 
 class Location(Base):
@@ -287,6 +290,12 @@ class User(Base):
         back_populates="user", cascade="all, delete-orphan"
     )
     settings: Mapped[list["UserSetting"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+    pipeline_configs: Mapped[list["PipelineConfig"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+    ranking_scores: Mapped[list["UserRankingScore"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
 
@@ -529,6 +538,68 @@ class UserSetting(Base):
 
     # Relationships
     user: Mapped["User"] = relationship(back_populates="settings")
+
+
+class PipelineConfig(Base):
+    __tablename__ = "pipeline_configs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    config_hash: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    config_json: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    is_active: Mapped[bool] = mapped_column(Boolean, server_default=text("0"))
+
+    __table_args__ = (Index("idx_pc_user_active", "user_id", "is_active"),)
+
+    # Relationships
+    user: Mapped["User"] = relationship(back_populates="pipeline_configs")
+    ranking_scores: Mapped[list["UserRankingScore"]] = relationship(
+        back_populates="pipeline_config", cascade="all, delete-orphan"
+    )
+
+
+class UserRankingScore(Base):
+    __tablename__ = "user_ranking_scores"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    posting_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("job_postings.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    pipeline_config_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("pipeline_configs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    composite_score: Mapped[float] = mapped_column(Float, nullable=False)
+    component_scores: Mapped[Optional[str]] = mapped_column(Text)
+    computed_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "posting_id", "pipeline_config_id"),
+        Index("idx_ranking_user_posting", "user_id", "posting_id"),
+        Index("idx_ranking_config", "pipeline_config_id"),
+        Index("idx_ranking_score", "user_id", "composite_score"),
+    )
+
+    # Relationships
+    user: Mapped["User"] = relationship(back_populates="ranking_scores")
+    posting: Mapped["JobPosting"] = relationship(back_populates="ranking_scores")
+    pipeline_config: Mapped["PipelineConfig"] = relationship(
+        back_populates="ranking_scores"
+    )
 
 
 # ── SQLite foreign key enforcement ──────────────────────────────

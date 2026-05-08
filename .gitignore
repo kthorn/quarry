@@ -80,4 +80,7 @@ digest_*.txt
 
 # pi
 .pi/
-.pi-lens/crawl_log_*.csv
+.pi-lens/
+
+# crawl logs
+crawl_log_*.csv

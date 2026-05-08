@@ -27,9 +27,8 @@ block content %}
     <span class="badge badge-{{ row.status }}">{{ row.status }}</span>
   </div>
   <div class="card-meta">
-    <span class="score"
-      >score: {{ "%.3f"|format(row.similarity_score or 0) }}</span
-    >
+    {% set display_score = row.composite_score or row.similarity_score or 0 %}
+    <span class="score">score: {{ "%.3f"|format(display_score) }}</span>
   </div>
   {% if row.description %}
   <details>
@@ -37,30 +36,44 @@ block content %}
     <div class="description">{{ row.description }}</div>
   </details>
   {% endif %}
-  <form
-    method="POST"
-    action="{{ url_for('ui.label', posting_id=row.id) }}"
-    class="inline"
-  >
-    <input type="hidden" name="status" value="applied" />
-    <button type="submit" class="small btn-applied">Applied</button>
-  </form>
-  <form
-    method="POST"
-    action="{{ url_for('ui.label', posting_id=row.id) }}"
-    class="inline"
-  >
-    <input type="hidden" name="status" value="rejected" />
-    <button type="submit" class="small btn-negative">Pass</button>
-  </form>
-  <form
-    method="POST"
-    action="{{ url_for('ui.label', posting_id=row.id) }}"
-    class="inline"
-  >
-    <input type="hidden" name="status" value="archived" />
-    <button type="submit" class="small btn-archive">Archive</button>
-  </form>
+  <div class="card-actions">
+    <form
+      method="POST"
+      action="{{ url_for('ui.label', posting_id=row.id) }}"
+      class="inline"
+    >
+      <input type="hidden" name="signal" value="positive" />
+      <button type="submit" class="small btn-positive">
+        &#x1F44D; Interested
+      </button>
+    </form>
+    <form
+      method="POST"
+      action="{{ url_for('ui.label', posting_id=row.id) }}"
+      class="inline"
+    >
+      <input type="hidden" name="signal" value="negative" />
+      <button type="submit" class="small btn-negative">
+        &#x1F44E; Not Interested
+      </button>
+    </form>
+    <form
+      method="POST"
+      action="{{ url_for('ui.label', posting_id=row.id) }}"
+      class="inline"
+    >
+      <input type="hidden" name="status" value="applied" />
+      <button type="submit" class="small btn-applied">Applied</button>
+    </form>
+    <form
+      method="POST"
+      action="{{ url_for('ui.label', posting_id=row.id) }}"
+      class="inline"
+    >
+      <input type="hidden" name="status" value="archived" />
+      <button type="submit" class="small btn-archive">Archive</button>
+    </form>
+  </div>
 </div>
 {% endfor %}
 
