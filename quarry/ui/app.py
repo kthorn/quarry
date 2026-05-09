@@ -1,3 +1,5 @@
+import os
+
 from flask import Flask
 
 from quarry.store.db import Database
@@ -18,6 +20,7 @@ def create_app(db_path: str | None = None) -> Flask:
     db = Database(db_path)
     app.config["DB"] = db
     app.config["PER_PAGE"] = 20
+    app.secret_key = os.environ.get("QUARRY_SECRET_KEY", os.urandom(24).hex())
 
     from quarry.ui.routes import bp
 
