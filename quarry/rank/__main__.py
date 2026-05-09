@@ -14,7 +14,6 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-from pathlib import Path
 
 # Import all scorers to populate the registry
 import quarry.rank.scorers  # noqa: F401
@@ -80,92 +79,17 @@ def cmd_config_set(args):
 
 def cmd_train(args):
     """Train classifier on current labels."""
-
-    from quarry.pipeline.embedder import deserialize_embedding, get_embedding_dim
-    from quarry.rank.scorers.classifier import ClassifierScorer
+    from quarry.rank.train import train_classifier
 
     db = _get_db()
-    rows = db.get_labels_with_postings(user_id=1)
-    if not rows:
-        print("No labeled postings found. Label some postings first.")
+    result = train_classifier(db=db, user_id=1, min_labels=args.min_labels)
+
+    if "error" in result:
+        print(result["error"])
         return
 
-    embeddings = []
-    valid_labels = []
-    dim = get_embedding_dim()
-
-    for row in rows:
-        label, emb_bytes, posting_id = row
-        if emb_bytes is None:
-            continue
-        try:
-            emb = deserialize_embedding(emb_bytes, dim)
-        except (ValueError, TypeError):
-            continue
-        # Create a minimal posting-like object with .embedding and .id
-        from types import SimpleNamespace
-
-        posting = SimpleNamespace(embedding=emb, id=posting_id)
-        embeddings.append(posting)
-        valid_labels.append(label)
-
-    if len(valid_labels) < args.min_labels:
-        print(
-            f"Not enough labeled postings ({len(valid_labels)} < {args.min_labels}). "
-            "Label more postings first."
-        )
-        return
-
-    scorer = ClassifierScorer(min_training_labels=args.min_labels)
-    result = scorer.fit(valid_labels, embeddings)
-    if result is None:
-        print("Training failed — insufficient labels after filtering embeddings.")
-        return
-
-    # Persist ClassifierVersion via ORM
-
-    from sqlalchemy import update
-
-    from quarry.store.models import ClassifierVersion as ORMClsVersion
-    from quarry.store.session import session_scope
-
-    with session_scope(engine=db.engine) as session:
-        version = ORMClsVersion(
-            training_samples=result["training_samples"],
-            positive_samples=result["positive_samples"],
-            negative_samples=result["negative_samples"],
-            cv_accuracy=result["cv_auc_mean"],
-            cv_precision=None,
-            cv_recall=None,
-            active=True,
-        )
-        session.add(version)
-        session.flush()
-        version_id = version.id
-
-        # Deactivate previous versions
-        session.execute(
-            update(ORMClsVersion)
-            .where(ORMClsVersion.id != version_id)
-            .values(active=False)
-        )
-
-        # Save model to disk
-        import pickle
-
-        models_dir = Path("quarry/models")
-        models_dir.mkdir(parents=True, exist_ok=True)
-        model_path = models_dir / f"classifier_1_v{version_id}.pkl"
-        with open(model_path, "wb") as f:
-            pickle.dump(scorer.model, f)
-        version.model_path = str(model_path)
-
-    # Reset the retrain counters
-    db.save_user_setting(1, "labels_since_last_train", "0")
-    db.save_user_setting(1, "retrain_pending", "false")
-
-    print(f"Training complete. Model saved: {model_path}")
-    print(f"Metrics: {json.dumps(result, indent=2)}")
+    print(f"Training complete. Model saved: {result['model_path']}")
+    print(f"AUC: {result['cv_auc_mean']:.4f}, Samples: {result['training_samples']}")
 
 
 def cmd_evaluate(args):
