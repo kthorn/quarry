@@ -798,6 +798,7 @@ class Database:
         status: str = "new",
         limit: int = 20,
         offset: int = 0,
+        search: str | None = None,
     ) -> list[dict]:
         from quarry.store.models import Company as ORMCompany
         from quarry.store.models import JobPosting as ORMPosting
@@ -878,16 +879,16 @@ class Database:
             )
         )
 
-        # Only join ranking scores if there's an active config
-        if active_config_id is not None:
-            stmt = stmt.outerjoin(
-                ORMRankScore,
-                and_(
-                    ORMPosting.id == ORMRankScore.posting_id,
-                    ORMRankScore.user_id == user_id,
-                    ORMRankScore.pipeline_config_id == active_config_id,
-                ),
-            )
+        # Always LEFT JOIN ranking scores — when there's no active config,
+        # the condition matches no rows and all ORMRankScore columns stay NULL
+        stmt = stmt.outerjoin(
+            ORMRankScore,
+            and_(
+                ORMPosting.id == ORMRankScore.posting_id,
+                ORMRankScore.user_id == user_id,
+                ORMRankScore.pipeline_config_id == active_config_id,
+            ),
+        )
 
         if status == "new":
             stmt = stmt.where(
@@ -898,6 +899,18 @@ class Database:
             )
         else:
             stmt = stmt.where(ORMStatus.status == status)
+
+        # Keyword search filter
+        if search:
+            escaped = (
+                search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            )
+            stmt = stmt.where(
+                or_(
+                    ORMPosting.title.ilike(f"%{escaped}%", escape="\\"),
+                    ORMPosting.description.ilike(f"%{escaped}%", escape="\\"),
+                )
+            )
 
         # Order by composite_score (ranking pipeline) falling back to similarity
         stmt = (

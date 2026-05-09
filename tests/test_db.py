@@ -1130,6 +1130,182 @@ def test_get_postings_for_search(db):
     assert p.title == "E"
 
 
+# ── get_postings_with_scores search parameter ───────────────────
+
+
+class TestGetPostingsWithScores:
+    def test_search_by_title(self, tmp_path):
+        db = init_db(tmp_path / "test.db")
+        company = models.Company(name="TestCorp")
+        cid = db.insert_company(company)
+        db.insert_posting(
+            models.JobPosting(
+                company_id=cid,
+                title="Senior Engineer",
+                title_hash="srch1",
+                url="https://example.com/srch1",
+            )
+        )
+        db.insert_posting(
+            models.JobPosting(
+                company_id=cid,
+                title="Product Manager",
+                title_hash="srch2",
+                url="https://example.com/srch2",
+            )
+        )
+        results = db.get_postings_with_scores(search="engineer")
+        assert len(results) == 1
+        assert results[0]["title"] == "Senior Engineer"
+
+    def test_search_by_description(self, tmp_path):
+        db = init_db(tmp_path / "test.db")
+        company = models.Company(name="TestCorp")
+        cid = db.insert_company(company)
+        db.insert_posting(
+            models.JobPosting(
+                company_id=cid,
+                title="Role A",
+                title_hash="srch3",
+                url="https://example.com/srch3",
+                description="Build data pipelines using Python",
+            )
+        )
+        db.insert_posting(
+            models.JobPosting(
+                company_id=cid,
+                title="Role B",
+                title_hash="srch4",
+                url="https://example.com/srch4",
+                description="Manage product roadmap",
+            )
+        )
+        results = db.get_postings_with_scores(search="python")
+        assert len(results) == 1
+        assert results[0]["title"] == "Role A"
+
+    def test_search_case_insensitive(self, tmp_path):
+        db = init_db(tmp_path / "test.db")
+        company = models.Company(name="TestCorp")
+        cid = db.insert_company(company)
+        db.insert_posting(
+            models.JobPosting(
+                company_id=cid,
+                title="SENIOR ENGINEER",
+                title_hash="srch5",
+                url="https://example.com/srch5",
+            )
+        )
+        results = db.get_postings_with_scores(search="engineer")
+        assert len(results) == 1
+
+    def test_search_no_results(self, tmp_path):
+        db = init_db(tmp_path / "test.db")
+        company = models.Company(name="TestCorp")
+        cid = db.insert_company(company)
+        db.insert_posting(
+            models.JobPosting(
+                company_id=cid,
+                title="Engineer",
+                title_hash="srch6",
+                url="https://example.com/srch6",
+            )
+        )
+        results = db.get_postings_with_scores(search="zookeeper")
+        assert len(results) == 0
+
+    def test_search_with_status_filter(self, tmp_path):
+        db = init_db(tmp_path / "test.db")
+        company = models.Company(name="TestCorp")
+        cid = db.insert_company(company)
+        db.insert_posting(
+            models.JobPosting(
+                company_id=cid,
+                title="Data Engineer",
+                title_hash="srch7",
+                url="https://example.com/srch7",
+            )
+        )
+        pid2 = db.insert_posting(
+            models.JobPosting(
+                company_id=cid,
+                title="Data Manager",
+                title_hash="srch8",
+                url="https://example.com/srch8",
+            )
+        )
+        db.update_posting_status(pid2, "applied")
+        results = db.get_postings_with_scores(status="new", search="data")
+        assert len(results) == 1
+        assert results[0]["title"] == "Data Engineer"
+
+    def test_search_special_characters(self, tmp_path):
+        """LIKE wildcards % and _ in search terms should be escaped."""
+        db = init_db(tmp_path / "test.db")
+        company = models.Company(name="Acme Corp")
+        cid = db.insert_company(company)
+        db.insert_posting(
+            models.JobPosting(
+                company_id=cid,
+                title="100% Remote",
+                title_hash="srch9",
+                url="https://example.com/srch9",
+            )
+        )
+        db.insert_posting(
+            models.JobPosting(
+                company_id=cid,
+                title="Senior Engineer",
+                title_hash="srch10",
+                url="https://example.com/srch10",
+            )
+        )
+        # Searching for "100%" should match only "100% Remote", not everything
+        results = db.get_postings_with_scores(search="100%")
+        assert len(results) == 1
+        assert results[0]["title"] == "100% Remote"
+
+    def test_search_empty_string_no_filter(self, tmp_path):
+        """Empty search string should return all postings (no filter)."""
+        db = init_db(tmp_path / "test.db")
+        company = models.Company(name="TestCorp")
+        cid = db.insert_company(company)
+        db.insert_posting(
+            models.JobPosting(
+                company_id=cid,
+                title="Engineer",
+                title_hash="srch11",
+                url="https://example.com/srch11",
+            )
+        )
+        db.insert_posting(
+            models.JobPosting(
+                company_id=cid,
+                title="Manager",
+                title_hash="srch12",
+                url="https://example.com/srch12",
+            )
+        )
+        results = db.get_postings_with_scores(search="")
+        assert len(results) == 2
+
+    def test_search_none_no_filter(self, tmp_path):
+        """None search should return all postings (backward compatible)."""
+        db = init_db(tmp_path / "test.db")
+        company = models.Company(name="TestCorp")
+        cid = db.insert_company(company)
+        db.insert_posting(
+            models.JobPosting(
+                company_id=cid,
+                title="Engineer",
+                title_hash="srch13",
+                url="https://example.com/srch13",
+            )
+        )
+        results = db.get_postings_with_scores(search=None)
+        assert len(results) == 1
+
+
 # ── Label CRUD ─────────────────────────────────────────────────
 
 
