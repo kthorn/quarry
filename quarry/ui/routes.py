@@ -119,7 +119,8 @@ def label(posting_id):
         return "Invalid status or signal", 400
 
     return_status = request.args.get("return_status", "new")
-    return redirect(url_for("ui.postings", status=return_status))
+    return_q = request.args.get("q", "")
+    return redirect(url_for("ui.postings", status=return_status, q=return_q))
 
 
 @bp.route("/retrain", methods=["POST"])
