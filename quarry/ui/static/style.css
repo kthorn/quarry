@@ -102,6 +102,16 @@ nav a:hover {
 	color: #6c757d;
 }
 
+.badge-positive {
+	background: #28a745;
+	color: #fff;
+}
+
+.badge-negative {
+	background: #dc3545;
+	color: #fff;
+}
+
 .tabs {
 	display: flex;
 	gap: 0.25rem;
@@ -263,6 +273,10 @@ pre {
 	gap: 0.5rem;
 }
 
+.scan-form {
+	margin-left: auto;
+}
+
 .btn-retrain {
 	background: #007bff;
 	color: #fff;
@@ -276,6 +290,15 @@ pre {
 	background: #ccc;
 	color: #666;
 	cursor: not-allowed;
+}
+
+.btn-scan {
+	background: #17a2b8;
+	color: #fff;
+}
+
+.btn-scan:hover {
+	background: #138496;
 }
 
 .label-count {
