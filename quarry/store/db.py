@@ -834,6 +834,7 @@ class Database:
         from quarry.store.models import PipelineConfig as ORMPipelineConfig
         from quarry.store.models import UserClassifierScore as ORMClsScore
         from quarry.store.models import UserEnrichedPosting as ORMEnriched
+        from quarry.store.models import UserLabel as ORMLabel
         from quarry.store.models import UserPostingStatus as ORMStatus
         from quarry.store.models import UserRankingScore as ORMRankScore
         from quarry.store.models import UserSimilarityScore as ORMSimScore
@@ -876,6 +877,17 @@ class Database:
                 func.coalesce(ORMRankScore.composite_score, 0.0).label(
                     "composite_score"
                 ),
+                # Scalar subquery: latest positive/negative interest signal per posting
+                (
+                    select(ORMLabel.signal)
+                    .where(
+                        ORMLabel.user_id == user_id,
+                        ORMLabel.posting_id == ORMPosting.id,
+                        ORMLabel.signal.in_(["positive", "negative"]),
+                    )
+                    .order_by(ORMLabel.labeled_at.desc())
+                    .limit(1)
+                ).label("interest_signal"),
             )
             .join(ORMCompany, ORMPosting.company_id == ORMCompany.id)
             .outerjoin(
