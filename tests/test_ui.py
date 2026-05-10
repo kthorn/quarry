@@ -654,43 +654,45 @@ class TestPostingsTemplateBadges:
         assert "badge-negative" in html
         assert "Not Interested" in html
 
-    def test_no_interest_badge_when_no_signal(self, app):
+    def test_no_interest_badge_when_no_signal(self, app_with_postings):
         """When no interest signal exists, neither badge should render."""
-        client = app.test_client()
-        response = client.get("/postings")
-        assert response.status_code == 200
-        html = response.data.decode()
-        # Should not contain interest badges since there are no postings
-        assert "badge-positive" not in html
-        assert "badge-negative" not in html
+        with app_with_postings.test_client() as client:
+            resp = client.get("/postings")
+            html = resp.data.decode()
+            assert resp.status_code == 200
+            # Badge classes only appear when there's an interest signal;
+            # with postings but no labels, neither badge should render
+            assert "badge-positive" not in html
+            assert "badge-negative" not in html
 
 
 class TestPostingsTemplateLabelForms:
     def test_label_forms_include_return_status(self, app_with_postings):
         """Label form actions should include return_status query param."""
-        client = app_with_postings.test_client()
-        response = client.get("/postings?status=new")
-        assert response.status_code == 200
-        html = response.data.decode()
-        # Each label form should have return_status=new in its action URL
-        assert "return_status=new" in html
+        with app_with_postings.test_client() as client:
+            resp = client.get("/postings")
+            html = resp.data.decode()
+            assert resp.status_code == 200
+            # Each label form action should include return_status
+            assert html.count("return_status=new") >= 4  # one per label button
 
     def test_label_forms_include_q_param(self, app_with_postings):
         """Label form actions should include search query param when set."""
-        client = app_with_postings.test_client()
-        response = client.get("/postings?q=data")
-        assert response.status_code == 200
-        html = response.data.decode()
-        assert "q=data" in html
+        with app_with_postings.test_client() as client:
+            resp = client.get("/postings?q=engineer")
+            html = resp.data.decode()
+            assert resp.status_code == 200
+            # Each label form action should include q=engineer
+            assert html.count("q=engineer") >= 4  # one per label button
 
     def test_label_forms_include_both_params(self, app_with_postings):
         """Label form actions should include both return_status and q."""
-        client = app_with_postings.test_client()
-        response = client.get("/postings?status=new&q=data")
-        assert response.status_code == 200
-        html = response.data.decode()
-        assert "return_status=new" in html
-        assert "q=data" in html
+        with app_with_postings.test_client() as client:
+            resp = client.get("/postings?status=new&q=engineer")
+            html = resp.data.decode()
+            assert resp.status_code == 200
+            assert html.count("q=engineer") >= 4
+            assert html.count("return_status=new") >= 4
 
 
 class TestPostingsTemplateScanButton:
@@ -706,13 +708,13 @@ class TestPostingsTemplateScanButton:
 
     def test_scan_form_includes_return_status(self, app_with_postings):
         """The scan form should include return_status and q hidden inputs."""
-        client = app_with_postings.test_client()
-        response = client.get("/postings?status=new&q=engineer")
-        assert response.status_code == 200
-        html = response.data.decode()
-        # Check scan form specifically (not the retrain form)
-        assert 'class="inline scan-form"' in html
-        assert "/scan" in html
+        with app_with_postings.test_client() as client:
+            resp = client.get("/postings")
+            html = resp.data.decode()
+            assert resp.status_code == 200
+            assert 'class="inline scan-form"' in html
+            assert 'name="return_status" value="new"' in html
+            assert 'name="q" value=""' in html
 
 
 class TestCompaniesDiscovered:
