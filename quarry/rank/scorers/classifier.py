@@ -7,6 +7,7 @@ Cold-start returns 0.0 until training with >= min_training_labels labels.
 from __future__ import annotations
 
 import logging
+import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -19,6 +20,9 @@ if TYPE_CHECKING:
     from quarry.rank.context import PipelineContext
 
 log = logging.getLogger(__name__)
+
+# Suppress BERT model loading warnings (cosmetic only).
+logging.getLogger("transformers.modeling_utils").setLevel(logging.ERROR)
 
 
 def _get_embedding_dim() -> int:
@@ -80,6 +84,8 @@ class ClassifierScorer(Scorer):
         Returns:
             Dict with cv metrics and the trained model, or None if insufficient labels.
         """
+
+        from sklearn.exceptions import UndefinedMetricWarning
         from sklearn.linear_model import LogisticRegression
         from sklearn.model_selection import cross_val_score
 
@@ -117,23 +123,53 @@ class ClassifierScorer(Scorer):
         x_mat = np.vstack(x_list)
         y_vec = np.array(y_list)
 
-        clf = LogisticRegression(max_iter=1000)
-        cv = min(5, len(y_list))
-        try:
-            cv_scores = cross_val_score(clf, x_mat, y_vec, cv=cv, scoring="roc_auc")
-        except ValueError as e:
-            log.warning("Cross-validation failed (likely single-class): %s", e)
+        # Guard: need both classes present for meaningful AUC
+        class_counts = np.bincount(y_vec)
+        if len(class_counts) < 2:
+            log.warning(
+                "Only one class present after filtering — cannot train classifier"
+            )
             return None
-        clf.fit(x_mat, y_vec)
 
+        # Ensure cv doesn't exceed the minority class count
+        min_class = class_counts.min()
+        cv = min(5, min_class, len(y_list) // 2)
+        if cv < 2:
+            log.warning(
+                "Too few samples per class for cross-validation "
+                "(minority class: %d, cv=%d)",
+                min_class,
+                cv,
+            )
+            return None
+
+        clf = LogisticRegression(max_iter=1000)
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message="Only one class is present",
+                category=UndefinedMetricWarning,
+            )
+            cv_scores = cross_val_score(clf, x_mat, y_vec, cv=cv, scoring="roc_auc")
+
+        # Filter out NaN scores from degenerately small folds
+        valid = cv_scores[~np.isnan(cv_scores)]
+        if len(valid) < 2:
+            log.warning(
+                "Cross-validation produced only %d valid fold(s) — cannot estimate AUC",
+                len(valid),
+            )
+            return None
+
+        clf.fit(x_mat, y_vec)
         self._model = clf
 
         metrics = {
             "training_samples": len(y_list),
             "positive_samples": int(y_vec.sum()),
             "negative_samples": int(len(y_list) - y_vec.sum()),
-            "cv_auc_mean": float(cv_scores.mean()),
-            "cv_auc_std": float(cv_scores.std()),
+            "cv_auc_mean": float(valid.mean()),
+            "cv_auc_std": float(valid.std()),
         }
         log.info("Classifier trained: %s", metrics)
         return metrics

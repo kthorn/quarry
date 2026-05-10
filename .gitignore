@@ -84,3 +84,6 @@ digest_*.txt
 
 # crawl logs
 crawl_log_*.csv
+
+# Generated classifier models
+quarry/models/

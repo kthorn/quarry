@@ -76,7 +76,11 @@ def train_classifier(
     if result is None:
         return {
             "error": (
-                "Training failed — insufficient labels after filtering embeddings."
+                "Training failed — check logs for details. "
+                f"Had {len(signal_labels)} labeled postings, "
+                f"but the classifier requires at least {min_labels} with both "
+                "positive and negative classes present and enough per class for "
+                "cross-validation."
             ),
             "training_samples": len(signal_labels),
         }
@@ -105,7 +109,9 @@ def train_classifier(
 
         # Save model to disk using absolute path
         _MODELS_DIR.mkdir(parents=True, exist_ok=True)
-        model_path = _MODELS_DIR / f"classifier_{user_id}_v{version_id}.pkl"
+        # user_id is caller-controlled; sanitize to prevent path traversal
+        safe_id = str(user_id).replace(".", "").replace("/", "")
+        model_path = _MODELS_DIR / f"classifier_{safe_id}_v{version_id}.pkl"
         with open(model_path, "wb") as f:
             pickle.dump(scorer.model, f)
         version.model_path = str(model_path)
