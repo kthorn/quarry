@@ -1,6 +1,6 @@
 # STATUS
 
-Last updated: 2026-05-08 (UI score breakdown, retrain, keyword search)
+Last updated: 2026-05-09 (interest indicators, search persistence, scan button)
 
 ## Phase 1 — MVP Progress
 
@@ -28,6 +28,7 @@ Last updated: 2026-05-08 (UI score breakdown, retrain, keyword search)
 - **Location filter work_model fix**: `LocationFilter` now uses `posting.work_model` (authoritative post-extraction value) instead of `parse_result.work_model`; `accept_remote=True` now also passes postings with `work_model=None` (unknown work model treated as potentially remote)
 - **Search CLI** (`python -m quarry.pipeline search`): keyword filtering by title/description, similarity scoring against an ad-hoc ideal description, terminal table output via tabulate
 - **UI enhancements** (2026-05-08): score breakdown display (composite/classifier/similarity/fit), keyword search on postings page, retrain classifier button with flash feedback
+- **UI enhancements** (2026-05-09): interest signal badges (green/red) on postings, search query persistence across label actions and pagination, "Run Scan" button in toolbar to trigger full crawl cycle from UI, `POST /scan` route, CSS for badge-positive/badge-negative/btn-scan
 - **Bug fix (2026-05-08)**: `get_postings_with_scores()` now always LEFT JOINs `user_ranking_scores` (fixes empty results when no active pipeline config)
 - **Shared training module**: `quarry/rank/train.py` — `train_classifier()` extracted from CLI for reuse by web UI
 - **Crawl log CSV**: ATS crawler 404 handling, noisy log suppression
@@ -73,7 +74,7 @@ All refined plans in `docs/plans/completed/`:
 - `python -m pytest tests/test_orm.py -v` — **17 ORM tests passing** (Phase 2)
 - `ruff check .` — clean
 - `pyright quarry/` — clean
-- `python -m pytest tests/ -q` — **454 passed, 22 skipped** (0 failures)
+- `python -m pytest tests/ -q` — **471 passed, 22 skipped** (0 failures)
 - **Note:** All four phases complete. All callers use per-user ORM methods with `user_id=1`. `get_recent_postings`/`get_postings_paginated`/`db.execute()` removed. Backward-compat aliases removed from `models.py`.
 - **Ranking pipeline:** `python -m quarry.rank list-scorers` — shows 5 registered scorers
 - **Ranking CLI:** `python -m quarry.rank config get|set`, `python -m quarry.rank train`, `python -m quarry.rank evaluate`, `python -m quarry.rank recompute`
