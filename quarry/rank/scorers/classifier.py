@@ -74,8 +74,8 @@ class ClassifierScorer(Scorer):
         """Train logistic regression on labeled postings.
 
         Args:
-            labels: List of UserLabel ORM rows with signal in ('positive', 'negative').
-            postings: List of JobPosting ORM rows (must have .embedding attribute).
+            labels: List of signal strings ('positive' or 'negative').
+            postings: List of objects with .embedding attribute.
 
         Returns:
             Dict with cv metrics and the trained model, or None if insufficient labels.
@@ -104,7 +104,7 @@ class ClassifierScorer(Scorer):
                 log.warning("Skipping posting %d: bad embedding: %s", posting.id, e)
                 continue
             x_list.append(emb)
-            y_list.append(1 if label.signal == "positive" else 0)
+            y_list.append(1 if label == "positive" else 0)
 
         if len(y_list) < self.min_training_labels:
             log.warning(

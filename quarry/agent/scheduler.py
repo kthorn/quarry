@@ -469,11 +469,11 @@ def run_once(db: Database, user_id: int = 1) -> dict:
 
             rows = db.get_labels_with_postings(user_id=user_id)
             if rows:
-                valid_labels = []
+                signal_labels = []
                 valid_postings = []
                 dim = get_embedding_dim()
                 for row in rows:
-                    label, emb_bytes, posting_id = row
+                    signal, emb_bytes, posting_id = row
                     if emb_bytes is None:
                         continue
                     try:
@@ -482,11 +482,11 @@ def run_once(db: Database, user_id: int = 1) -> dict:
                         continue
                     posting = SimpleNamespace(embedding=emb, id=posting_id)
                     valid_postings.append(posting)
-                    valid_labels.append(label)
+                    signal_labels.append(signal)
 
-                if len(valid_labels) >= 20:
+                if len(signal_labels) >= 20:
                     scorer = ClassifierScorer(min_training_labels=20)
-                    metrics = scorer.fit(valid_labels, valid_postings)
+                    metrics = scorer.fit(signal_labels, valid_postings)
                     if metrics:
                         # Persist ClassifierVersion
                         import pickle

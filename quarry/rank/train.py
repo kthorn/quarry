@@ -47,11 +47,11 @@ def train_classifier(
         }
 
     dim = get_embedding_dim()
-    valid_labels = []
+    signal_labels = []
     embeddings = []
 
     for row in rows:
-        label, emb_bytes, posting_id = row
+        signal, emb_bytes, posting_id = row
         if emb_bytes is None:
             continue
         try:
@@ -60,25 +60,25 @@ def train_classifier(
             continue
         posting = SimpleNamespace(embedding=emb, id=posting_id)
         embeddings.append(posting)
-        valid_labels.append(label)
+        signal_labels.append(signal)
 
-    if len(valid_labels) < min_labels:
+    if len(signal_labels) < min_labels:
         return {
             "error": (
-                f"Not enough labeled postings ({len(valid_labels)} < {min_labels}). "
+                f"Not enough labeled postings ({len(signal_labels)} < {min_labels}). "
                 "Label more postings first."
             ),
-            "training_samples": len(valid_labels),
+            "training_samples": len(signal_labels),
         }
 
     scorer = ClassifierScorer(min_training_labels=min_labels)
-    result = scorer.fit(valid_labels, embeddings)
+    result = scorer.fit(signal_labels, embeddings)
     if result is None:
         return {
             "error": (
                 "Training failed — insufficient labels after filtering embeddings."
             ),
-            "training_samples": len(valid_labels),
+            "training_samples": len(signal_labels),
         }
 
     # Persist ClassifierVersion via ORM

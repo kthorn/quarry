@@ -495,6 +495,23 @@ class TestLogRoute:
         assert b"No agent" in response.data
 
 
+class TestRetrainRoute:
+    def test_retrain_insufficient_labels(self, app, tmp_path):
+        """POST /retrain with no labels should flash an error."""
+        client = app.test_client()
+        response = client.post("/retrain", follow_redirects=True)
+        assert response.status_code == 200
+        # Should show error flash about insufficient labels
+        assert b"Not enough" in response.data or b"No labeled" in response.data
+
+    def test_retrain_redirects_to_postings(self, app):
+        """POST /retrain should redirect back to /postings."""
+        client = app.test_client()
+        response = client.post("/retrain")
+        assert response.status_code == 302
+        assert "/postings" in response.headers["Location"]
+
+
 class TestCompaniesDiscovered:
     def test_companies_page_shows_discovered(self, app, tmp_path):
         db = Database(tmp_path / "test.db")

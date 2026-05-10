@@ -1,6 +1,14 @@
 from typing import Literal
 
-from flask import Blueprint, current_app, redirect, render_template, request, url_for
+from flask import (
+    Blueprint,
+    current_app,
+    flash,
+    redirect,
+    render_template,
+    request,
+    url_for,
+)
 
 from quarry.models import UserLabel, UserWatchlistItem
 from quarry.store.db import Database
@@ -35,6 +43,7 @@ def postings():
     page = request.args.get("page", 1, type=int)
     if page < 1:
         page = 1
+    q = request.args.get("q", "")
 
     db = get_db()
     per_page = current_app.config["PER_PAGE"]
@@ -45,6 +54,7 @@ def postings():
         status=status,
         limit=per_page + 1,
         offset=offset,
+        search=q if q else None,
     )
     has_next = len(results) > per_page
     results = results[:per_page]
@@ -54,6 +64,8 @@ def postings():
         for s in VALID_STATUSES
     }
 
+    label_count = int(db.get_user_setting(USER_ID, "labels_since_last_train") or "0")
+
     return render_template(
         "postings.html",
         results=results,
@@ -62,6 +74,8 @@ def postings():
         has_next=has_next,
         counts=counts,
         valid_statuses=VALID_STATUSES,
+        q=q,
+        label_count=label_count,
     )
 
 
@@ -106,6 +120,27 @@ def label(posting_id):
 
     return_status = request.args.get("return_status", "new")
     return redirect(url_for("ui.postings", status=return_status))
+
+
+@bp.route("/retrain", methods=["POST"])
+def retrain():
+    from quarry.rank.train import train_classifier
+
+    db = get_db()
+    return_status = request.form.get("return_status", "new")
+    return_q = request.form.get("q", "")
+
+    result = train_classifier(db=db, user_id=USER_ID, min_labels=5)
+
+    if "error" in result:
+        flash(result["error"])
+    else:
+        flash(
+            f"Classifier trained on {result['training_samples']} labels "
+            f"(AUC: {result['cv_auc_mean']:.2f})."
+        )
+
+    return redirect(url_for("ui.postings", status=return_status, q=return_q))
 
 
 @bp.route("/companies")

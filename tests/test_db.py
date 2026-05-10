@@ -1482,3 +1482,33 @@ def test_get_watchlist_companies_filters_discovered(db):
     )
     assert len(discovered) == 1
     assert discovered[0]["name"] == "SearchCo"
+
+
+class TestGetUserSetting:
+    def test_returns_existing_value(self, tmp_path):
+        db = init_db(tmp_path / "test.db")
+        db.save_user_setting(1, "labels_since_last_train", "42")
+        assert db.get_user_setting(1, "labels_since_last_train") == "42"
+
+    def test_returns_none_for_missing_key(self, tmp_path):
+        db = init_db(tmp_path / "test.db")
+        assert db.get_user_setting(1, "nonexistent") is None
+
+    def test_returns_none_for_null_value(self, tmp_path):
+        db = init_db(tmp_path / "test.db")
+        # Insert a setting with NULL value directly
+        import sqlite3
+
+        conn = sqlite3.connect(str(tmp_path / "test.db"))
+        conn.execute(
+            "INSERT INTO user_settings (user_id, key, value) VALUES (?, ?, NULL)",
+            (1, "test_key"),
+        )
+        conn.commit()
+        conn.close()
+        assert db.get_user_setting(1, "test_key") is None
+
+    def test_preserves_empty_string(self, tmp_path):
+        db = init_db(tmp_path / "test.db")
+        db.save_user_setting(1, "test_key", "")
+        assert db.get_user_setting(1, "test_key") == ""

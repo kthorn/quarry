@@ -12,24 +12,25 @@
 
 ## File Structure
 
-| Action | File | Responsibility |
-|--------|------|----------------|
-| Create | `quarry/rank/train.py` | Shared `train_classifier()` function (extracted from `__main__.py`) |
-| Modify | `quarry/store/db.py` | Add `search` param to `get_postings_with_scores()`, add `get_user_setting()` |
-| Modify | `quarry/rank/__main__.py` | Refactor `cmd_train()` to call `train_classifier()` |
-| Modify | `quarry/ui/routes.py` | Add `POST /retrain` route, pass `q` param to postings, import `flash` |
-| Modify | `quarry/ui/app.py` | Set `app.secret_key` |
-| Modify | `quarry/ui/templates/base.html` | Add flash message rendering |
-| Modify | `quarry/ui/templates/postings.html` | Score breakdown, search box, retrain button |
-| Modify | `quarry/ui/static/style.css` | Role-tier badge styles, retrain button, search box, flash messages |
-| Modify | `tests/test_db.py` | Tests for `search` param, `get_user_setting()` |
-| Modify | `tests/test_ui.py` | Tests for retrain route, search route, updated postings view |
+| Action | File                                | Responsibility                                                               |
+| ------ | ----------------------------------- | ---------------------------------------------------------------------------- |
+| Create | `quarry/rank/train.py`              | Shared `train_classifier()` function (extracted from `__main__.py`)          |
+| Modify | `quarry/store/db.py`                | Add `search` param to `get_postings_with_scores()`, add `get_user_setting()` |
+| Modify | `quarry/rank/__main__.py`           | Refactor `cmd_train()` to call `train_classifier()`                          |
+| Modify | `quarry/ui/routes.py`               | Add `POST /retrain` route, pass `q` param to postings, import `flash`        |
+| Modify | `quarry/ui/app.py`                  | Set `app.secret_key`                                                         |
+| Modify | `quarry/ui/templates/base.html`     | Add flash message rendering                                                  |
+| Modify | `quarry/ui/templates/postings.html` | Score breakdown, search box, retrain button                                  |
+| Modify | `quarry/ui/static/style.css`        | Role-tier badge styles, retrain button, search box, flash messages           |
+| Modify | `tests/test_db.py`                  | Tests for `search` param, `get_user_setting()`                               |
+| Modify | `tests/test_ui.py`                  | Tests for retrain route, search route, updated postings view                 |
 
 ---
 
 ### Task 1: Add `search` parameter to `get_postings_with_scores()`
 
 **Files:**
+
 - Modify: `quarry/store/db.py:795-918` (the `get_postings_with_scores` method)
 - Test: `tests/test_db.py`
 
@@ -254,6 +255,7 @@ git commit -m "feat: add search parameter to get_postings_with_scores()"
 ### Task 2: Add `get_user_setting()` convenience method
 
 **Files:**
+
 - Modify: `quarry/store/db.py` (add method after `get_user_settings_raw`)
 - Test: `tests/test_db.py`
 
@@ -333,6 +335,7 @@ git commit -m "feat: add get_user_setting() convenience method"
 ### Task 3: Extract `train_classifier()` into shared module
 
 **Files:**
+
 - Create: `quarry/rank/train.py`
 - Modify: `quarry/rank/__main__.py` (refactor `cmd_train` to call shared function)
 
@@ -519,6 +522,7 @@ git commit -m "refactor: extract train_classifier() into shared module"
 ### Task 4: Add `app.secret_key` and flash message rendering
 
 **Files:**
+
 - Modify: `quarry/ui/app.py` (add `app.secret_key`)
 - Modify: `quarry/ui/templates/base.html` (add flash block)
 
@@ -538,34 +542,31 @@ Don't forget to add `import os` at the top of the file.
 Inside `<main>`, before `{% block content %}`, add:
 
 ```html
-    <main>
-        {% with messages = get_flashed_messages() %}
-        {% if messages %}
-        <div class="flash-messages">
-            {% for message in messages %}
-            <div class="flash-message">{{ message }}</div>
-            {% endfor %}
-        </div>
-        {% endif %}
-        {% endwith %}
-        {% block content %}{% endblock %}
-    </main>
+<main>
+  {% with messages = get_flashed_messages() %} {% if messages %}
+  <div class="flash-messages">
+    {% for message in messages %}
+    <div class="flash-message">{{ message }}</div>
+    {% endfor %}
+  </div>
+  {% endif %} {% endwith %} {% block content %}{% endblock %}
+</main>
 ```
 
 - [ ] **Step 3: Add flash message CSS to `quarry/ui/static/style.css`**
 
 ```css
 .flash-messages {
-    margin-bottom: 1rem;
+  margin-bottom: 1rem;
 }
 
 .flash-message {
-    background: #d4edda;
-    color: #155724;
-    padding: 0.75rem 1rem;
-    border-radius: 4px;
-    margin-bottom: 0.5rem;
-    border: 1px solid #c3e6cb;
+  background: #d4edda;
+  color: #155724;
+  padding: 0.75rem 1rem;
+  border-radius: 4px;
+  margin-bottom: 0.5rem;
+  border: 1px solid #c3e6cb;
 }
 ```
 
@@ -589,6 +590,7 @@ git commit -m "feat: add app.secret_key and flash message rendering"
 ### Task 5: Add `POST /retrain` route
 
 **Files:**
+
 - Modify: `quarry/ui/routes.py` (add `flash` import, add retrain route, pass label count and search)
 - Test: `tests/test_ui.py`
 
@@ -627,6 +629,7 @@ Expected: FAIL (404 or 405 for `/retrain`)
 In `quarry/ui/routes.py`:
 
 1. Add `flash` to the Flask import line:
+
 ```python
 from flask import Blueprint, current_app, flash, redirect, render_template, request, url_for
 ```
@@ -722,12 +725,14 @@ git commit -m "feat: add POST /retrain route and search param to postings"
 ### Task 6: Update postings template — score breakdown, search box, retrain button
 
 **Files:**
+
 - Modify: `quarry/ui/templates/postings.html`
 - Modify: `quarry/ui/static/style.css`
 
 - [ ] **Step 1: Update the template**
 
 Replace the content of `quarry/ui/templates/postings.html` with the full updated template. Key changes:
+
 1. Add search form between status tabs and card list
 2. Replace the single score line with a score breakdown
 3. Add retrain button in the header area
@@ -879,98 +884,98 @@ Add to `quarry/ui/static/style.css`:
 
 ```css
 .toolbar {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    margin-bottom: 0.5rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 0.5rem;
 }
 
 .retrain-form {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
 }
 
 .btn-retrain {
-    background: #007bff;
-    color: #fff;
+  background: #007bff;
+  color: #fff;
 }
 
 .btn-retrain:hover:not(:disabled) {
-    background: #0056b3;
+  background: #0056b3;
 }
 
 .btn-retrain:disabled {
-    background: #ccc;
-    color: #666;
-    cursor: not-allowed;
+  background: #ccc;
+  color: #666;
+  cursor: not-allowed;
 }
 
 .label-count {
-    font-size: 0.8rem;
-    color: #999;
+  font-size: 0.8rem;
+  color: #999;
 }
 
 .search-form {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    margin-bottom: 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
 }
 
 .search-input {
-    flex: 1;
-    padding: 0.4rem 0.6rem;
-    border: 1px solid #ddd;
-    border-radius: 4px;
-    font-size: 0.9rem;
+  flex: 1;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 0.9rem;
 }
 
 .search-input:focus {
-    outline: none;
-    border-color: #007bff;
+  outline: none;
+  border-color: #007bff;
 }
 
 .search-clear {
-    font-size: 0.85rem;
-    color: #999;
-    text-decoration: none;
+  font-size: 0.85rem;
+  color: #999;
+  text-decoration: none;
 }
 
 .search-clear:hover {
-    color: #333;
+  color: #333;
 }
 
 .score-line {
-    display: flex;
-    align-items: baseline;
-    gap: 0.5rem;
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
 }
 
 .score-detail {
-    font-size: 0.75rem;
-    color: #999;
+  font-size: 0.75rem;
+  color: #999;
 }
 
 .fit-reason {
-    font-size: 0.75rem;
-    color: #666;
-    font-style: italic;
+  font-size: 0.75rem;
+  color: #666;
+  font-style: italic;
 }
 
 .badge-reach {
-    background: #fff3cd;
-    color: #856404;
+  background: #fff3cd;
+  color: #856404;
 }
 
 .badge-match {
-    background: #d4edda;
-    color: #155724;
+  background: #d4edda;
+  color: #155724;
 }
 
 .badge-strong-match {
-    background: #28a745;
-    color: #fff;
+  background: #28a745;
+  color: #fff;
 }
 ```
 
@@ -1034,6 +1039,7 @@ git add -A && git commit -m "fix: lint and type fixes from full test run"
 - [ ] **Step 1: Update `docs/STATUS.md`**
 
 Add to the "M5: Ranking pipeline" section:
+
 - [x] Score breakdown display in UI (composite/classifier/similarity/fit)
 - [x] Keyword search in postings UI
 - [x] Retrain classifier button in UI
@@ -1041,6 +1047,7 @@ Add to the "M5: Ranking pipeline" section:
 - [x] Flash message support in base template
 
 Add to Verification section:
+
 - `python -m quarry.rank train` — shared `train_classifier()` function
 - UI: search box, retrain button, score breakdown on `/postings`
 - `POST /retrain` — triggers classifier training with flash feedback

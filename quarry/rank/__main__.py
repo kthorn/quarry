@@ -105,11 +105,11 @@ def cmd_evaluate(args):
         return
 
     dim = get_embedding_dim()
-    valid_labels = []
+    signal_labels = []
     valid_postings = []
 
     for row in rows:
-        label, emb_bytes, posting_id = row
+        signal, emb_bytes, posting_id = row
         if emb_bytes is None:
             continue
         try:
@@ -120,14 +120,14 @@ def cmd_evaluate(args):
 
         posting = SimpleNamespace(embedding=emb, id=posting_id)
         valid_postings.append(posting)
-        valid_labels.append(label)
+        signal_labels.append(signal)
 
-    if len(valid_labels) < 5:
-        print(f"Need at least 5 labeled postings, got {len(valid_labels)}.")
+    if len(signal_labels) < 5:
+        print(f"Need at least 5 labeled postings, got {len(signal_labels)}.")
         return
 
     scorer = ClassifierScorer(min_training_labels=5)
-    result = scorer.fit(valid_labels, valid_postings)
+    result = scorer.fit(signal_labels, valid_postings)
     if result:
         print(json.dumps(result, indent=2))
     else:

@@ -60,6 +60,7 @@ New route `POST /retrain` in `quarry/ui/routes.py`:
 The training logic lives in a shared function so both CLI and web can call it. Extract the combined Phase 1+2 logic from `cmd_train()` into `quarry/rank/scorers/classifier.py` (or a new `quarry/rank/train.py`) as `train_classifier(db, min_labels=5)`. The function returns a dict with keys `training_samples` (int), `cv_auc_mean` (float), and optionally `error` (str). The `db` parameter provides engine access; the function handles its own session management.
 
 **Implementation notes:**
+
 - `db.get_labels_with_postings()` returns `(UserLabel, embedding_bytes, posting_id)` tuples — not `(UserLabel, JobPosting)` as the docstring incorrectly claims. `train_classifier()` must unpack the 3-tuple pattern that `cmd_train()` already follows.
 - The ORM `ClassifierVersion.cv_accuracy` column stores ROC AUC (not accuracy percentage) — this is a pre-existing naming mismatch the plan inherits.
 - `ClassifierVersion` has no `user_id` column — the current `cmd_train()` deactivates all prior versions globally. For now (single-user, `USER_ID=1`), this is harmless. The plan does not add multi-user scoping; it follows the existing pattern.
@@ -69,6 +70,7 @@ The training logic lives in a shared function so both CLI and web can call it. E
 - Place `train_classifier()` in a new `quarry/rank/train.py` module (not in `classifier.py`) to keep the scorer pure and avoid coupling it to the ORM/storage layer.
 
 **Dependencies:**
+
 - The `POST /retrain` route must import `flash` from Flask.
 - The Flask app factory (`quarry/ui/app.py`) must set `app.secret_key` — `flash()` requires a session secret. Use `app.secret_key = os.urandom(24).hex()` or similar.
 - The `base.html` template must render flashed messages (it currently lacks a `get_flashed_messages()` block). Place it inside `<main>` before `{% block content %}` for good UX.
@@ -89,10 +91,12 @@ The training logic lives in a shared function so both CLI and web can call it. E
 ### Data for label count
 
 Add a convenience method `db.get_user_setting(user_id: int, key: str) -> str | None`:
+
 ```python
 def get_user_setting(self, user_id: int, key: str) -> str | None:
     return self.get_user_settings_raw(user_id).get(key)
 ```
+
 `dict.get(key)` returns `None` for both missing keys and keys with `None` values — both are handled correctly by the calling pattern `int(result or "0")`. Unlike `(dict.get(key) or None)`, this preserves empty-string `""` values (though no current settings store them).
 
 Callers use `int(db.get_user_setting(1, "labels_since_last_train") or "0")`.
@@ -136,16 +140,16 @@ This filters server-side, preserving pagination and status filters. SQLAlchemy's
 
 ## Files Changed
 
-| File                                | Changes                                                                                          |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `quarry/store/db.py`                | Add `search` parameter to `get_postings_with_scores()`; add `get_user_setting()` convenience method |
-| `quarry/rank/__main__.py`           | Refactor `cmd_train()` to call shared `train_classifier(db, min_labels)`                         |
+| File                                | Changes                                                                                                                                                                  |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `quarry/store/db.py`                | Add `search` parameter to `get_postings_with_scores()`; add `get_user_setting()` convenience method                                                                      |
+| `quarry/rank/__main__.py`           | Refactor `cmd_train()` to call shared `train_classifier(db, min_labels)`                                                                                                 |
 | `quarry/rank/scorers/classifier.py` | Add reusable `train_classifier(db, min_labels)` function handling fit + persist + model save + counter reset; fix model path to absolute (or new `quarry/rank/train.py`) |
-| `quarry/ui/routes.py`               | New `POST /retrain` route; import `flash`; pass `search` param to `get_postings_with_scores()` in postings route |
-| `quarry/ui/app.py`                  | Set `app.secret_key` (required for Flask `flash()`)                                              |
-| `quarry/ui/templates/base.html`     | Add `{% with messages = get_flashed_messages() %}` block inside `<main>` before `{% block content %}` |
-| `quarry/ui/templates/postings.html` | Score breakdown display; search box (`<form method="GET">` with hidden status input); retrain button |
-| `quarry/ui/static/style.css`        | CSS classes for role-tier badges (`.badge-reach`, `.badge-match`, `.badge-strong-match`) if used |
+| `quarry/ui/routes.py`               | New `POST /retrain` route; import `flash`; pass `search` param to `get_postings_with_scores()` in postings route                                                         |
+| `quarry/ui/app.py`                  | Set `app.secret_key` (required for Flask `flash()`)                                                                                                                      |
+| `quarry/ui/templates/base.html`     | Add `{% with messages = get_flashed_messages() %}` block inside `<main>` before `{% block content %}`                                                                    |
+| `quarry/ui/templates/postings.html` | Score breakdown display; search box (`<form method="GET">` with hidden status input); retrain button                                                                     |
+| `quarry/ui/static/style.css`        | CSS classes for role-tier badges (`.badge-reach`, `.badge-match`, `.badge-strong-match`) if used                                                                         |
 
 ## Tests
 
@@ -173,10 +177,12 @@ This filters server-side, preserving pagination and status filters. SQLAlchemy's
 
 - **Empty search query:** `search=""` or `search=None` adds no filter (backward compatible)
 - **Search with special characters:** SQLAlchemy's `ilike` does NOT auto-escape `%` or `_` (LIKE wildcards). A search for `100%` would match everything. Explicitly escape before constructing the pattern:
+
 ```python
 escaped = search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 ORMPosting.title.ilike(f"%{escaped}%", escape="\\")
 ```
+
 - **Retrain with no labels:** Returns error flash; button should be disabled when count is 0
 - **Retrain when model save fails:** Disk write errors are caught and flashed; previous model version remains active
 - **Model save path:** Use an absolute path derived from the package root (not relative `quarry/models/`) to work regardless of web server CWD

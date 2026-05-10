@@ -19,8 +19,8 @@ def _patch_embedding_dim():
         yield
 
 
-def make_label(signal: str, posting_id: int = 1) -> SimpleNamespace:
-    return SimpleNamespace(signal=signal, posting_id=posting_id)
+def make_label(signal: str, posting_id: int = 1) -> str:
+    return signal
 
 
 def make_posting(embedding: np.ndarray, posting_id: int = 1) -> SimpleNamespace:

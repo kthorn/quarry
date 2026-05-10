@@ -455,21 +455,42 @@ class Database:
         from quarry.store.models import UserSetting as ORMUserSetting
 
         with session_scope(engine=self.engine) as session:
-            orm_label = ORMLabel(
-                user_id=label.user_id if label.user_id is not None else user_id,
-                posting_id=label.posting_id,
-                signal=label.signal,
-                notes=label.notes,
-                label_source=label.label_source,
+            actual_user_id = label.user_id if label.user_id is not None else user_id
+
+            # Upsert: insert or update if (user_id, posting_id, signal) already exists
+            stmt = (
+                sqlite_insert(ORMLabel)
+                .values(
+                    user_id=actual_user_id,
+                    posting_id=label.posting_id,
+                    signal=label.signal,
+                    notes=label.notes,
+                    label_source=label.label_source,
+                )
+                .on_conflict_do_update(
+                    index_elements=["user_id", "posting_id", "signal"],
+                    set_=dict(
+                        notes=label.notes,
+                        label_source=label.label_source,
+                        labeled_at=func.now(),
+                    ),
+                )
             )
-            session.add(orm_label)
+            session.execute(stmt)
             session.flush()
-            label_id = orm_label.id
+
+            # Retrieve the label id — could be newly inserted or from existing row
+            row = session.execute(
+                select(ORMLabel.id).where(
+                    ORMLabel.user_id == actual_user_id,
+                    ORMLabel.posting_id == label.posting_id,
+                    ORMLabel.signal == label.signal,
+                )
+            ).scalar_one()
+            label_id = row
 
             # Increment labels_since_last_train counter for interest signals
             if label.signal in ("positive", "negative"):
-                actual_user_id = label.user_id if label.user_id is not None else user_id
-
                 # Read current counter (default "0" if missing)
                 row = session.execute(
                     select(ORMUserSetting.value).where(
@@ -791,6 +812,14 @@ class Database:
                 )
             ).all()
             return {row.key: row.value for row in result}
+
+    def get_user_setting(self, user_id: int, key: str) -> str | None:
+        """Get a single user setting value by key.
+
+        Returns None for both missing keys and keys with NULL values.
+        Preserves empty string values.
+        """
+        return self.get_user_settings_raw(user_id).get(key)
 
     def get_postings_with_scores(
         self,
@@ -1193,7 +1222,9 @@ class Database:
     def get_labels_with_postings(self, user_id: int = 1) -> list[tuple]:
         """Fetch all user labels with posting embeddings for classifier training.
 
-        Returns list of (UserLabel, JobPosting) tuples. Both are ORM objects.
+        Returns list of (signal: str, embedding: bytes | None, posting_id: int).
+        Signal values are eagerly loaded inside the session to avoid
+        DetachedInstanceError when accessing them after the session closes.
         """
         from quarry.store.models import JobPosting as ORMPosting
         from quarry.store.models import UserLabel as ORMLabel
@@ -1207,7 +1238,8 @@ class Database:
                     ORMLabel.signal.in_(["positive", "negative"]),
                 )
             ).all()
-            return [(row[0], row[1], row[2]) for row in result]
+            # Access .signal inside the session to avoid lazy-load on detached instance
+            return [(row[0].signal, row[1], row[2]) for row in result]
 
     def upsert_ranking_score(
         self,
