@@ -598,6 +598,38 @@ class TestRetrainRoute:
         assert "/postings" in response.headers["Location"]
 
 
+class TestScanRoute:
+    def test_scan_redirects_to_postings(self, app):
+        """POST /scan should redirect back to /postings."""
+        client = app.test_client()
+        response = client.post("/scan")
+        assert response.status_code == 302
+        assert "/postings" in response.headers["Location"]
+
+    def test_scan_preserves_status_and_q(self, app):
+        """POST /scan should preserve return_status and q in redirect."""
+        client = app.test_client()
+        response = client.post(
+            "/scan", data={"return_status": "applied", "q": "engineer"}
+        )
+        assert response.status_code == 302
+        location = response.headers["Location"]
+        assert "status=applied" in location
+        assert "q=engineer" in location
+
+    def test_scan_flash_on_error(self, app):
+        """POST /scan should flash error when run_once fails."""
+        from unittest import mock
+
+        with mock.patch("quarry.agent.scheduler.run_once") as mock_run:
+            mock_run.side_effect = Exception("API timeout")
+            client = app.test_client()
+            response = client.post("/scan", follow_redirects=True)
+            assert response.status_code == 200
+            assert b"Scan failed" in response.data
+            assert b"API timeout" in response.data
+
+
 # ── Template Tests (Task 3: postings.html badges, form actions, scan button) ─
 
 

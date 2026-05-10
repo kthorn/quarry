@@ -1,3 +1,4 @@
+import logging
 from typing import Literal
 
 from flask import (
@@ -12,6 +13,8 @@ from flask import (
 
 from quarry.models import UserLabel, UserWatchlistItem
 from quarry.store.db import Database
+
+logger = logging.getLogger(__name__)
 
 bp = Blueprint("ui", __name__, template_folder="templates")
 
@@ -155,13 +158,14 @@ def scan():
     try:
         summary = run_once(db, user_id=USER_ID)
         flash(
-            f"Scan complete: {summary['total_new']} new, "
-            f"{summary['total_duplicates']} duplicates, "
-            f"{summary['total_filtered']} filtered, "
-            f"{summary['companies_crawled']} companies, "
-            f"{summary['companies_errored']} errors."
+            f"Scan complete: {summary.get('total_new', 0)} new, "
+            f"{summary.get('total_duplicates', 0)} duplicates, "
+            f"{summary.get('total_filtered', 0)} filtered, "
+            f"{summary.get('companies_crawled', 0)} companies, "
+            f"{summary.get('companies_errored', 0)} errors."
         )
     except Exception as e:
+        logger.exception("Scan failed")
         flash(f"Scan failed: {e}")
 
     return redirect(url_for("ui.postings", status=return_status, q=return_q))
