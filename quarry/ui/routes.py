@@ -146,10 +146,24 @@ def retrain():
 
 @bp.route("/scan", methods=["POST"])
 def scan():
-    """Trigger a full job scan. Placeholder — full implementation in Task 4."""
-    flash("Scan not yet implemented.")
+    from quarry.agent.scheduler import run_once
+
+    db = get_db()
     return_status = request.form.get("return_status", "new")
     return_q = request.form.get("q", "")
+
+    try:
+        summary = run_once(db, user_id=USER_ID)
+        flash(
+            f"Scan complete: {summary['total_new']} new, "
+            f"{summary['total_duplicates']} duplicates, "
+            f"{summary['total_filtered']} filtered, "
+            f"{summary['companies_crawled']} companies, "
+            f"{summary['companies_errored']} errors."
+        )
+    except Exception as e:
+        flash(f"Scan failed: {e}")
+
     return redirect(url_for("ui.postings", status=return_status, q=return_q))
 
 
