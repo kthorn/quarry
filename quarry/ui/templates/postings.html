@@ -23,6 +23,11 @@
     </button>
     <span class="label-count">{{ label_count }} interest label{{ 's' if label_count != 1 else '' }} since last train</span>
   </form>
+  <form method="POST" action="{{ url_for('ui.scan') }}" class="inline scan-form">
+    <input type="hidden" name="return_status" value="{{ status }}" />
+    <input type="hidden" name="q" value="{{ q }}" />
+    <button type="submit" class="small btn-scan">Run Scan</button>
+  </form>
 </div>
 
 <form method="GET" action="{{ url_for('ui.postings') }}" class="search-form">
@@ -45,6 +50,11 @@
     <span class="badge badge-{{ row.work_model }}">{{ row.work_model }}</span>
     {% endif %}
     <span class="badge badge-{{ row.status }}">{{ row.status }}</span>
+    {% if row.interest_signal == "positive" %}
+    <span class="badge badge-positive">Interested</span>
+    {% elif row.interest_signal == "negative" %}
+    <span class="badge badge-negative">Not Interested</span>
+    {% endif %}
     {% if row.role_tier %}
     <span class="badge badge-{{ row.role_tier }}">{{ row.role_tier }}</span>
     {% endif %}
@@ -71,7 +81,7 @@
   <div class="card-actions">
     <form
       method="POST"
-      action="{{ url_for('ui.label', posting_id=row.id) }}"
+      action="{{ url_for('ui.label', posting_id=row.id, return_status=status, q=q) }}"
       class="inline"
     >
       <input type="hidden" name="signal" value="positive" />
@@ -81,7 +91,7 @@
     </form>
     <form
       method="POST"
-      action="{{ url_for('ui.label', posting_id=row.id) }}"
+      action="{{ url_for('ui.label', posting_id=row.id, return_status=status, q=q) }}"
       class="inline"
     >
       <input type="hidden" name="signal" value="negative" />
@@ -91,7 +101,7 @@
     </form>
     <form
       method="POST"
-      action="{{ url_for('ui.label', posting_id=row.id) }}"
+      action="{{ url_for('ui.label', posting_id=row.id, return_status=status, q=q) }}"
       class="inline"
     >
       <input type="hidden" name="status" value="applied" />
@@ -99,7 +109,7 @@
     </form>
     <form
       method="POST"
-      action="{{ url_for('ui.label', posting_id=row.id) }}"
+      action="{{ url_for('ui.label', posting_id=row.id, return_status=status, q=q) }}"
       class="inline"
     >
       <input type="hidden" name="status" value="archived" />

@@ -144,6 +144,15 @@ def retrain():
     return redirect(url_for("ui.postings", status=return_status, q=return_q))
 
 
+@bp.route("/scan", methods=["POST"])
+def scan():
+    """Trigger a full job scan. Placeholder — full implementation in Task 4."""
+    flash("Scan not yet implemented.")
+    return_status = request.form.get("return_status", "new")
+    return_q = request.form.get("q", "")
+    return redirect(url_for("ui.postings", status=return_status, q=return_q))
+
+
 @bp.route("/companies")
 def companies():
     db = get_db()

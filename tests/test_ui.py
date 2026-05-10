@@ -598,6 +598,123 @@ class TestRetrainRoute:
         assert "/postings" in response.headers["Location"]
 
 
+# ── Template Tests (Task 3: postings.html badges, form actions, scan button) ─
+
+
+@pytest.fixture
+def app_with_labels(app, tmp_path):
+    """Fixture with a posting that has interest labels."""
+    db = Database(tmp_path / "test.db")
+    company = Company(name="LabelCo", ats_type="greenhouse", ats_slug="labelco")
+    cid = db.insert_company(company)
+    posting = JobPosting(
+        company_id=cid,
+        title="ML Engineer",
+        title_hash="hash_labeltest",
+        url="https://labelco.com/job/1",
+        description="Build ML models",
+        location="Remote, US",
+        work_model="remote",
+        source_type="greenhouse",
+    )
+    pid = db.insert_posting(posting)
+    # Insert a positive label
+    db.insert_label(UserLabel(user_id=1, posting_id=pid, signal="positive"))
+    return app
+
+
+class TestPostingsTemplateBadges:
+    def test_interest_positive_badge_renders(self, app_with_labels):
+        """When a posting has a positive interest signal, 'Interested' badge shows."""
+        client = app_with_labels.test_client()
+        response = client.get("/postings")
+        assert response.status_code == 200
+        html = response.data.decode()
+        assert "badge-positive" in html
+        assert "Interested" in html
+
+    def test_interest_negative_badge_renders(self, app, tmp_path):
+        """When a posting has a negative interest signal, 'Not Interested' badge shows."""
+        db = Database(tmp_path / "test.db")
+        company = Company(name="NegativeCo")
+        cid = db.insert_company(company)
+        posting = JobPosting(
+            company_id=cid,
+            title="Junior Dev",
+            title_hash="hash_negbadge",
+            url="https://negco.com/job/1",
+            description="Entry level",
+        )
+        pid = db.insert_posting(posting)
+        db.insert_label(UserLabel(user_id=1, posting_id=pid, signal="negative"))
+        client = app.test_client()
+        response = client.get("/postings")
+        assert response.status_code == 200
+        html = response.data.decode()
+        assert "badge-negative" in html
+        assert "Not Interested" in html
+
+    def test_no_interest_badge_when_no_signal(self, app):
+        """When no interest signal exists, neither badge should render."""
+        client = app.test_client()
+        response = client.get("/postings")
+        assert response.status_code == 200
+        html = response.data.decode()
+        # Should not contain interest badges since there are no postings
+        assert "badge-positive" not in html
+        assert "badge-negative" not in html
+
+
+class TestPostingsTemplateLabelForms:
+    def test_label_forms_include_return_status(self, app_with_postings):
+        """Label form actions should include return_status query param."""
+        client = app_with_postings.test_client()
+        response = client.get("/postings?status=new")
+        assert response.status_code == 200
+        html = response.data.decode()
+        # Each label form should have return_status=new in its action URL
+        assert "return_status=new" in html
+
+    def test_label_forms_include_q_param(self, app_with_postings):
+        """Label form actions should include search query param when set."""
+        client = app_with_postings.test_client()
+        response = client.get("/postings?q=data")
+        assert response.status_code == 200
+        html = response.data.decode()
+        assert "q=data" in html
+
+    def test_label_forms_include_both_params(self, app_with_postings):
+        """Label form actions should include both return_status and q."""
+        client = app_with_postings.test_client()
+        response = client.get("/postings?status=new&q=data")
+        assert response.status_code == 200
+        html = response.data.decode()
+        assert "return_status=new" in html
+        assert "q=data" in html
+
+
+class TestPostingsTemplateScanButton:
+    def test_scan_button_in_toolbar(self, app):
+        """The 'Run Scan' button should appear in the toolbar."""
+        client = app.test_client()
+        response = client.get("/postings")
+        assert response.status_code == 200
+        html = response.data.decode()
+        assert "Run Scan" in html
+        assert "/scan" in html
+        assert "scan-form" in html
+
+    def test_scan_form_includes_return_status(self, app_with_postings):
+        """The scan form should include return_status and q hidden inputs."""
+        client = app_with_postings.test_client()
+        response = client.get("/postings?status=new&q=engineer")
+        assert response.status_code == 200
+        html = response.data.decode()
+        # Check scan form specifically (not the retrain form)
+        assert 'class="inline scan-form"' in html
+        assert "/scan" in html
+
+
 class TestCompaniesDiscovered:
     def test_companies_page_shows_discovered(self, app, tmp_path):
         db = Database(tmp_path / "test.db")
