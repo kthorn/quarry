@@ -12,7 +12,7 @@ Three targeted UI improvements to make the Quarry labeling UI more usable as the
 
 ### Data
 
-Interest signals (`positive` / `negative`) are stored in the `user_labels` table alongside status-derived signals (`applied`, `skip`). A user may click both "Interested" and "Not Interested" over time, so the relevant value is the *latest* `positive` or `negative` label for each posting.
+Interest signals (`positive` / `negative`) are stored in the `user_labels` table alongside status-derived signals (`applied`, `skip`). A user may click both "Interested" and "Not Interested" over time, so the relevant value is the _latest_ `positive` or `negative` label for each posting.
 
 ### Query change
 
@@ -34,6 +34,7 @@ This returns `"positive"`, `"negative"`, or `None` per row.
 ### Template change (`postings.html`)
 
 Add a compact badge next to the card title (or in the `card-meta` line) that shows:
+
 - `✅ Interested` in green when `row.interest_signal == "positive"`
 - `❌ Not Interested` in red when `row.interest_signal == "negative"`
 - Nothing extra when `None` (no interest signal yet)
@@ -59,6 +60,7 @@ Each of the five action forms in the posting card needs an additional hidden inp
 ```
 
 The forms to update:
+
 - "Interested" form (signal=positive)
 - "Not Interested" form (signal=negative)
 - "Applied" form (status=applied)
@@ -124,12 +126,12 @@ Emphasis styling for the scan button: `btn-scan` class.
 
 ## Files Changed
 
-| File | Change |
-|------|--------|
-| `quarry/store/db.py` | Add `interest_signal` subquery to `get_postings_with_scores()` |
-| `quarry/ui/routes.py` | Add `POST /scan` route; read + forward `q` in `POST /label/<id>` |
-| `quarry/ui/templates/postings.html` | Add interest badges, search-query hidden inputs, scan button |
-| `quarry/ui/static/style.css` | Add `.badge-positive`, `.badge-negative`, `.btn-scan` styles |
+| File                                | Change                                                           |
+| ----------------------------------- | ---------------------------------------------------------------- |
+| `quarry/store/db.py`                | Add `interest_signal` subquery to `get_postings_with_scores()`   |
+| `quarry/ui/routes.py`               | Add `POST /scan` route; read + forward `q` in `POST /label/<id>` |
+| `quarry/ui/templates/postings.html` | Add interest badges, search-query hidden inputs, scan button     |
+| `quarry/ui/static/style.css`        | Add `.badge-positive`, `.badge-negative`, `.btn-scan` styles     |
 
 ## Testing
 
