@@ -246,6 +246,80 @@ class TestGetPostingsWithScores:
         above_threshold = [r for r in results if r["similarity_score"] >= 0.5]
         assert len(above_threshold) == 2
 
+    def test_interest_signal_positive(self, tmp_path):
+        db = init_db(tmp_path / "test.db")
+        company = Company(name="AcmeCorp")
+        cid = db.insert_company(company)
+        pid = db.insert_posting(
+            JobPosting(
+                company_id=cid,
+                title="Engineer",
+                title_hash="int_pos",
+                url="https://example.com/int_pos",
+            )
+        )
+        db.insert_label(UserLabel(user_id=1, posting_id=pid, signal="positive"))
+        results = db.get_postings_with_scores()
+        assert len(results) == 1
+        assert results[0]["interest_signal"] == "positive"
+
+    def test_interest_signal_negative(self, tmp_path):
+        db = init_db(tmp_path / "test.db")
+        company = Company(name="AcmeCorp")
+        cid = db.insert_company(company)
+        pid = db.insert_posting(
+            JobPosting(
+                company_id=cid,
+                title="Engineer",
+                title_hash="int_neg",
+                url="https://example.com/int_neg",
+            )
+        )
+        db.insert_label(UserLabel(user_id=1, posting_id=pid, signal="negative"))
+        results = db.get_postings_with_scores()
+        assert len(results) == 1
+        assert results[0]["interest_signal"] == "negative"
+
+    def test_interest_signal_latest_wins(self, tmp_path):
+        import time
+
+        db = init_db(tmp_path / "test.db")
+        company = Company(name="AcmeCorp")
+        cid = db.insert_company(company)
+        pid = db.insert_posting(
+            JobPosting(
+                company_id=cid,
+                title="Engineer",
+                title_hash="int_latest",
+                url="https://example.com/int_latest",
+            )
+        )
+        # Insert negative first, then positive — positive should win (latest)
+        # Sleep between inserts to ensure different SQLite now() timestamps
+        db.insert_label(UserLabel(user_id=1, posting_id=pid, signal="negative"))
+        time.sleep(1)
+        db.insert_label(UserLabel(user_id=1, posting_id=pid, signal="positive"))
+        results = db.get_postings_with_scores()
+        assert len(results) == 1
+        assert results[0]["interest_signal"] == "positive"
+
+    def test_interest_signal_excludes_applied(self, tmp_path):
+        db = init_db(tmp_path / "test.db")
+        company = Company(name="AcmeCorp")
+        cid = db.insert_company(company)
+        pid = db.insert_posting(
+            JobPosting(
+                company_id=cid,
+                title="Engineer",
+                title_hash="int_applied",
+                url="https://example.com/int_applied",
+            )
+        )
+        db.insert_label(UserLabel(user_id=1, posting_id=pid, signal="applied"))
+        results = db.get_postings_with_scores()
+        assert len(results) == 1
+        assert results[0]["interest_signal"] is None
+
 
 class TestGetLabelsForPosting:
     def test_returns_labels(self, tmp_path):
