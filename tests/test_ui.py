@@ -281,7 +281,12 @@ class TestGetPostingsWithScores:
         assert results[0]["interest_signal"] == "negative"
 
     def test_interest_signal_latest_wins(self, tmp_path):
-        import time
+        from datetime import datetime, timedelta
+
+        from sqlalchemy import update
+
+        from quarry.store.models import UserLabel as ORMLabel
+        from quarry.store.session import session_scope
 
         db = init_db(tmp_path / "test.db")
         company = Company(name="AcmeCorp")
@@ -294,11 +299,18 @@ class TestGetPostingsWithScores:
                 url="https://example.com/int_latest",
             )
         )
-        # Insert negative first, then positive — positive should win (latest)
-        # Sleep between inserts to ensure different SQLite now() timestamps
+        # Insert both labels, then backdate the negative so positive is latest
         db.insert_label(UserLabel(user_id=1, posting_id=pid, signal="negative"))
-        time.sleep(1)
         db.insert_label(UserLabel(user_id=1, posting_id=pid, signal="positive"))
+        with session_scope(engine=db.engine) as session:
+            session.execute(
+                update(ORMLabel)
+                .where(
+                    ORMLabel.posting_id == pid,
+                    ORMLabel.signal == "negative",
+                )
+                .values(labeled_at=datetime.now() - timedelta(days=1))
+            )
         results = db.get_postings_with_scores()
         assert len(results) == 1
         assert results[0]["interest_signal"] == "positive"
