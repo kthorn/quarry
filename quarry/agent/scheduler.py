@@ -459,75 +459,13 @@ def run_once(db: Database, user_id: int = 1) -> dict:
         retrain_pending = settings_raw.get("retrain_pending", "false")
         if retrain_pending == "true":
             log.info("Phase: retraining classifier")
-            from types import SimpleNamespace
+            from quarry.rank.train import train_classifier
 
-            from quarry.pipeline.embedder import (
-                deserialize_embedding,
-                get_embedding_dim,
-            )
-            from quarry.rank.scorers.classifier import ClassifierScorer
-
-            rows = db.get_labels_with_postings(user_id=user_id)
-            if rows:
-                signal_labels = []
-                valid_postings = []
-                dim = get_embedding_dim()
-                for row in rows:
-                    signal, emb_bytes, posting_id = row
-                    if emb_bytes is None:
-                        continue
-                    try:
-                        emb = deserialize_embedding(emb_bytes, dim)
-                    except (ValueError, TypeError):
-                        continue
-                    posting = SimpleNamespace(embedding=emb, id=posting_id)
-                    valid_postings.append(posting)
-                    signal_labels.append(signal)
-
-                if len(signal_labels) >= 20:
-                    scorer = ClassifierScorer(min_training_labels=20)
-                    metrics = scorer.fit(signal_labels, valid_postings)
-                    if metrics:
-                        # Persist ClassifierVersion
-                        import pickle
-
-                        from sqlalchemy import update
-
-                        from quarry.store.models import ClassifierVersion as ORMClsVer
-                        from quarry.store.session import session_scope
-
-                        with session_scope(engine=db.engine) as session:
-                            version = ORMClsVer(
-                                training_samples=metrics["training_samples"],
-                                positive_samples=metrics["positive_samples"],
-                                negative_samples=metrics["negative_samples"],
-                                cv_accuracy=metrics["cv_auc_mean"],
-                                cv_precision=None,
-                                cv_recall=None,
-                                active=True,
-                            )
-                            session.add(version)
-                            session.flush()
-                            v_id = version.id
-                            session.execute(
-                                update(ORMClsVer)
-                                .where(ORMClsVer.id != v_id)
-                                .values(active=False)
-                            )
-                            models_dir = Path("quarry/models")
-                            models_dir.mkdir(parents=True, exist_ok=True)
-                            model_path = (
-                                models_dir / f"classifier_{user_id}_v{v_id}.pkl"
-                            )
-                            with open(model_path, "wb") as f:
-                                pickle.dump(scorer.model, f)
-                            version.model_path = str(model_path)
-
-                        db.save_user_setting(user_id, "labels_since_last_train", "0")
-                        db.save_user_setting(user_id, "retrain_pending", "false")
-                        log.info("Classifier retrained: %s", metrics)
+            result = train_classifier(db, user_id=user_id, min_labels=20)
+            if "error" in result:
+                log.info("Retraining skipped: %s", result["error"])
             else:
-                log.info("No labeled postings; skipping retraining")
+                log.info("Classifier retrained: %s", result)
     except Exception:
         log.exception("Retraining phase failed")
 

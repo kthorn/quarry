@@ -7,6 +7,7 @@ Cold-start returns 0.0 until training with >= min_training_labels labels.
 from __future__ import annotations
 
 import logging
+import pickle
 import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -174,9 +175,42 @@ class ClassifierScorer(Scorer):
         log.info("Classifier trained: %s", metrics)
         return metrics
 
+    def _try_load_model(self, db) -> bool:
+        """Load the latest active classifier model from disk.
+
+        Returns True if a model was loaded.
+        """
+        try:
+            from sqlalchemy import select
+
+            from quarry.store.models import ClassifierVersion as ORMClsVer
+            from quarry.store.session import session_scope
+
+            with session_scope(engine=db.engine) as session:
+                version = session.execute(
+                    select(ORMClsVer)
+                    .where(ORMClsVer.active.is_(True))
+                    .order_by(ORMClsVer.id.desc())
+                    .limit(1)
+                ).scalar_one_or_none()
+                if version is None or not version.model_path:
+                    return False
+                with open(version.model_path, "rb") as f:
+                    self._model = pickle.load(f)
+                self._model_version_id = version.id
+                return True
+        except Exception:
+            log.warning("Failed to load classifier model", exc_info=True)
+            return False
+
     def score(self, posting_id: int, context: "PipelineContext") -> float:
         if self._model is None:
-            return 0.0
+            db = getattr(context, "db", None)
+            if db is None:
+                return 0.0
+            if not self._try_load_model(db):
+                return 0.0
+        assert self._model is not None  # narrow for pyright
 
         db = getattr(context, "db", None)
         if db is None:

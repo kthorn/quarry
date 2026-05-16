@@ -21,6 +21,13 @@ bp = Blueprint("ui", __name__, template_folder="templates")
 USER_ID = 1  # Single-user mode until auth is added
 
 VALID_STATUSES = ["new", "seen", "applied", "rejected", "archived"]
+VALID_INTERESTS = ["all", "interested", "untagged", "not_interested"]
+INTEREST_LABELS = {
+    "all": "All",
+    "interested": "Interested",
+    "untagged": "Untagged",
+    "not_interested": "Not Interested",
+}
 STATUS_TO_SIGNAL = {
     "applied": "applied",
     "rejected": "negative",
@@ -43,6 +50,9 @@ def postings():
     status = request.args.get("status", "new")
     if status not in VALID_STATUSES:
         status = "new"
+    interest = request.args.get("interest", "all")
+    if interest not in VALID_INTERESTS:
+        interest = "all"
     page = request.args.get("page", 1, type=int)
     if page < 1:
         page = 1
@@ -58,12 +68,15 @@ def postings():
         limit=per_page + 1,
         offset=offset,
         search=q if q else None,
+        interest=interest if interest != "all" else None,
     )
     has_next = len(results) > per_page
     results = results[:per_page]
 
     counts = {
-        s: db.count_postings_by_watchlist(user_id=USER_ID, status=s)
+        s: db.count_postings_by_watchlist(
+            user_id=USER_ID, status=s, interest=interest if interest != "all" else None
+        )
         for s in VALID_STATUSES
     }
 
@@ -73,10 +86,13 @@ def postings():
         "postings.html",
         results=results,
         status=status,
+        interest=interest,
         page=page,
         has_next=has_next,
         counts=counts,
         valid_statuses=VALID_STATUSES,
+        valid_interests=VALID_INTERESTS,
+        interest_labels=INTEREST_LABELS,
         q=q,
         label_count=label_count,
     )
@@ -123,7 +139,16 @@ def label(posting_id):
 
     return_status = request.args.get("return_status", "new")
     return_q = request.args.get("q", "")
-    return redirect(url_for("ui.postings", status=return_status, q=return_q))
+    return_interest = request.args.get("return_interest", "all")
+    return redirect(
+        url_for(
+            "ui.postings",
+            status=return_status,
+            q=return_q,
+            interest=return_interest,
+        )
+        + f"#posting-{posting_id}"
+    )
 
 
 @bp.route("/retrain", methods=["POST"])
@@ -133,6 +158,7 @@ def retrain():
     db = get_db()
     return_status = request.form.get("return_status", "new")
     return_q = request.form.get("q", "")
+    return_interest = request.form.get("return_interest", "all")
 
     result = train_classifier(db=db, user_id=USER_ID, min_labels=5)
 
@@ -144,7 +170,14 @@ def retrain():
             f"(AUC: {result['cv_auc_mean']:.2f})."
         )
 
-    return redirect(url_for("ui.postings", status=return_status, q=return_q))
+    return redirect(
+        url_for(
+            "ui.postings",
+            status=return_status,
+            q=return_q,
+            interest=return_interest,
+        )
+    )
 
 
 @bp.route("/scan", methods=["POST"])
@@ -154,6 +187,7 @@ def scan():
     db = get_db()
     return_status = request.form.get("return_status", "new")
     return_q = request.form.get("q", "")
+    return_interest = request.form.get("return_interest", "all")
 
     try:
         summary = run_once(db, user_id=USER_ID)
@@ -168,7 +202,14 @@ def scan():
         logger.exception("Scan failed")
         flash(f"Scan failed: {e}")
 
-    return redirect(url_for("ui.postings", status=return_status, q=return_q))
+    return redirect(
+        url_for(
+            "ui.postings",
+            status=return_status,
+            q=return_q,
+            interest=return_interest,
+        )
+    )
 
 
 @bp.route("/companies")

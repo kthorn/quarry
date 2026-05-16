@@ -1512,3 +1512,79 @@ class TestGetUserSetting:
         db = init_db(tmp_path / "test.db")
         db.save_user_setting(1, "test_key", "")
         assert db.get_user_setting(1, "test_key") == ""
+
+
+class TestInsertPipelineConfig:
+    def test_insert_new_config(self, db):
+        from quarry.rank.config import RankingConfig, StepConfig
+
+        config = RankingConfig(
+            steps=[
+                StepConfig(
+                    step_type="scorer", name="similarity", params={}, enabled=True
+                ),
+                StepConfig(
+                    step_type="scorer", name="classifier", params={}, enabled=True
+                ),
+            ],
+            final_scorer_name="classifier",
+        )
+        pc_id = db.insert_pipeline_config(1, config, description="classifier v1")
+        assert pc_id is not None
+        active = db.get_active_pipeline_config(1)
+        assert active is not None
+        assert active.id == pc_id
+
+    def test_reuses_existing_config_on_duplicate(self, db):
+        from quarry.rank.config import RankingConfig, StepConfig
+
+        config = RankingConfig(
+            steps=[
+                StepConfig(
+                    step_type="scorer", name="similarity", params={}, enabled=True
+                ),
+                StepConfig(
+                    step_type="scorer", name="classifier", params={}, enabled=True
+                ),
+            ],
+            final_scorer_name="classifier",
+        )
+        pc_id1 = db.insert_pipeline_config(1, config, description="classifier v1")
+        pc_id2 = db.insert_pipeline_config(1, config, description="classifier v2")
+        assert pc_id1 == pc_id2
+        # Verify description was updated on the row
+        import sqlite3
+
+        conn = sqlite3.connect(str(db.engine.url).replace("sqlite:///", ""))
+        row = conn.execute(
+            "SELECT description FROM pipeline_configs WHERE id = ?", (pc_id1,)
+        ).fetchone()
+        conn.close()
+        assert row[0] == "classifier v2"
+
+    def test_different_users_can_have_same_config(self, db):
+        from quarry.rank.config import RankingConfig, StepConfig
+
+        config = RankingConfig(
+            steps=[
+                StepConfig(
+                    step_type="scorer", name="similarity", params={}, enabled=True
+                ),
+            ],
+            final_scorer_name="similarity",
+        )
+        # Add a second user
+        import sqlite3
+
+        conn = sqlite3.connect(str(db.engine.url).replace("sqlite:///", ""))
+        conn.execute(
+            "INSERT INTO users (id, email) VALUES (?, ?)", (2, "user2@example.com")
+        )
+        conn.commit()
+        conn.close()
+
+        pc_id1 = db.insert_pipeline_config(1, config, description="user1 config")
+        pc_id2 = db.insert_pipeline_config(2, config, description="user2 config")
+        assert pc_id1 != pc_id2
+        assert db.get_active_pipeline_config(1).id == pc_id1
+        assert db.get_active_pipeline_config(2).id == pc_id2

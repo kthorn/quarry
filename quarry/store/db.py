@@ -821,6 +821,22 @@ class Database:
         """
         return self.get_user_settings_raw(user_id).get(key)
 
+    def _interest_signal_subquery(self, user_id: int, posting_col):
+        """Return a scalar subquery for the latest positive/negative label."""
+        from quarry.store.models import UserLabel as ORMLabel
+
+        return (
+            select(ORMLabel.signal)
+            .where(
+                ORMLabel.user_id == user_id,
+                ORMLabel.posting_id == posting_col,
+                ORMLabel.signal.in_(["positive", "negative"]),
+            )
+            .order_by(ORMLabel.labeled_at.desc())
+            .limit(1)
+            .scalar_subquery()
+        )
+
     def get_postings_with_scores(
         self,
         user_id: int = 1,
@@ -828,6 +844,7 @@ class Database:
         limit: int = 20,
         offset: int = 0,
         search: str | None = None,
+        interest: str | None = None,
     ) -> list[dict]:
         from quarry.store.models import Company as ORMCompany
         from quarry.store.models import JobPosting as ORMPosting
@@ -878,16 +895,9 @@ class Database:
                     "composite_score"
                 ),
                 # Scalar subquery: latest positive/negative interest signal per posting
-                (
-                    select(ORMLabel.signal)
-                    .where(
-                        ORMLabel.user_id == user_id,
-                        ORMLabel.posting_id == ORMPosting.id,
-                        ORMLabel.signal.in_(["positive", "negative"]),
-                    )
-                    .order_by(ORMLabel.labeled_at.desc())
-                    .limit(1)
-                ).label("interest_signal"),
+                self._interest_signal_subquery(user_id, ORMPosting.id).label(
+                    "interest_signal"
+                ),
             )
             .join(ORMCompany, ORMPosting.company_id == ORMCompany.id)
             .outerjoin(
@@ -941,6 +951,26 @@ class Database:
         else:
             stmt = stmt.where(ORMStatus.status == status)
 
+        # Interest filter
+        if interest == "interested":
+            stmt = stmt.where(
+                self._interest_signal_subquery(user_id, ORMPosting.id) == "positive"
+            )
+        elif interest == "not_interested":
+            stmt = stmt.where(
+                self._interest_signal_subquery(user_id, ORMPosting.id) == "negative"
+            )
+        elif interest == "untagged":
+            from sqlalchemy import exists
+
+            stmt = stmt.where(
+                ~exists().where(
+                    ORMLabel.user_id == user_id,
+                    ORMLabel.posting_id == ORMPosting.id,
+                    ORMLabel.signal.in_(["positive", "negative"]),
+                )
+            )
+
         # Keyword search filter
         if search:
             escaped = (
@@ -974,6 +1004,7 @@ class Database:
         self,
         user_id: int = 1,
         status: str | None = None,
+        interest: str | None = None,
     ) -> int:
         """Count postings from user's watchlist, optionally filtered by status."""
         from quarry.store.models import Company as ORMCompany
@@ -1016,6 +1047,28 @@ class Database:
                         ORMStatus.user_id == user_id,
                     ),
                 ).where(ORMStatus.status == status)
+
+        # Interest filter
+        if interest == "interested":
+            stmt = stmt.where(
+                self._interest_signal_subquery(user_id, ORMPosting.id) == "positive"
+            )
+        elif interest == "not_interested":
+            stmt = stmt.where(
+                self._interest_signal_subquery(user_id, ORMPosting.id) == "negative"
+            )
+        elif interest == "untagged":
+            from sqlalchemy import exists
+
+            from quarry.store.models import UserLabel as ORMLabel
+
+            stmt = stmt.where(
+                ~exists().where(
+                    ORMLabel.user_id == user_id,
+                    ORMLabel.posting_id == ORMPosting.id,
+                    ORMLabel.signal.in_(["positive", "negative"]),
+                )
+            )
 
         with session_scope(engine=self.engine) as session:
             result = session.execute(stmt).scalar()
@@ -1253,6 +1306,41 @@ class Database:
             # Access .signal inside the session to avoid lazy-load on detached instance
             return [(row[0].signal, row[1], row[2]) for row in result]
 
+    def upsert_classifier_score(
+        self,
+        user_id: int,
+        posting_id: int,
+        classifier_score: float,
+        model_version_id: int | None = None,
+    ) -> None:
+        """Insert or update a classifier score for a posting."""
+        from quarry.store.models import UserClassifierScore as ORMClsScore
+
+        values = dict(
+            user_id=user_id,
+            posting_id=posting_id,
+            classifier_score=classifier_score,
+        )
+        if model_version_id is not None:
+            values["model_version_id"] = model_version_id
+
+        set_ = dict(
+            classifier_score=classifier_score,
+            computed_at=func.now(),
+        )
+        if model_version_id is not None:
+            set_["model_version_id"] = model_version_id
+
+        with session_scope(engine=self.engine) as session:
+            session.execute(
+                sqlite_insert(ORMClsScore)
+                .values(**values)
+                .on_conflict_do_update(
+                    index_elements=["user_id", "posting_id"],
+                    set_=set_,
+                )
+            )
+
     def upsert_ranking_score(
         self,
         user_id: int,
@@ -1323,6 +1411,8 @@ class Database:
         """
         import hashlib
 
+        from sqlalchemy import select
+
         from quarry.store.models import PipelineConfig as ORMPipelineConfig
 
         config_json = config.model_dump_json(exclude={"id"})
@@ -1338,6 +1428,21 @@ class Database:
                 )
                 .values(is_active=False)
             )
+
+            # If an identical config already exists for this user, reuse it
+            existing = session.execute(
+                select(ORMPipelineConfig).where(
+                    ORMPipelineConfig.user_id == user_id,
+                    ORMPipelineConfig.config_hash == config_hash,
+                )
+            ).scalar_one_or_none()
+
+            if existing:
+                existing.is_active = True
+                if description is not None:
+                    existing.description = description
+                session.flush()
+                return existing.id
 
             new_row = ORMPipelineConfig(
                 user_id=user_id,

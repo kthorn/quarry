@@ -549,13 +549,16 @@ class PipelineConfig(Base):
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
     )
-    config_hash: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    config_hash: Mapped[str] = mapped_column(Text, nullable=False)
     config_json: Mapped[str] = mapped_column(Text, nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     is_active: Mapped[bool] = mapped_column(Boolean, server_default=text("0"))
 
-    __table_args__ = (Index("idx_pc_user_active", "user_id", "is_active"),)
+    __table_args__ = (
+        Index("idx_pc_user_active", "user_id", "is_active"),
+        UniqueConstraint("user_id", "config_hash"),
+    )
 
     # Relationships
     user: Mapped["User"] = relationship(back_populates="pipeline_configs")

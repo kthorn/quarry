@@ -141,6 +141,41 @@ nav a:hover {
 	color: #999;
 }
 
+.interest-bar {
+	gap: 0.5rem;
+	margin-bottom: 0.75rem;
+}
+
+.interest-bar .filter-label {
+	font-size: 0.85rem;
+	color: #666;
+	font-weight: 500;
+}
+
+.interest-filter {
+	font-size: 0.85rem;
+	padding: 0.3rem 0.6rem;
+	text-decoration: none;
+	color: #555;
+	border: 1px solid #ddd;
+	border-radius: 4px;
+	background: #fff;
+}
+
+.interest-filter.active {
+	background: #1a1a1a;
+	color: #fff;
+	border-color: #1a1a1a;
+}
+
+.interest-filter:hover {
+	background: #f0f0f0;
+}
+
+.interest-filter.active:hover {
+	background: #333;
+}
+
 .score {
 	font-family: "SF Mono", "Menlo", "Monaco", "Consolas", monospace;
 	font-size: 0.85rem;

@@ -11,6 +11,7 @@ from typing import Any
 from sqlalchemy import update
 
 from quarry.pipeline.embedder import deserialize_embedding, get_embedding_dim
+from quarry.rank.config import RankingConfig, StepConfig
 from quarry.rank.scorers.classifier import ClassifierScorer
 from quarry.store.models import ClassifierVersion as ORMClsVersion
 from quarry.store.session import session_scope
@@ -120,6 +121,9 @@ def train_classifier(
     db.save_user_setting(user_id, "labels_since_last_train", "0")
     db.save_user_setting(user_id, "retrain_pending", "false")
 
+    # ── Re-score all postings with the new classifier ─────────
+    _rescore_all_postings(db, user_id, scorer, version_id)
+
     log.info(
         "Classifier trained for user %d: %d samples, AUC=%.4f, model=%s",
         user_id,
@@ -133,3 +137,62 @@ def train_classifier(
         "cv_auc_mean": result["cv_auc_mean"],
         "model_path": str(model_path),
     }
+
+
+def _rescore_all_postings(
+    db: Any,
+    user_id: int,
+    scorer: ClassifierScorer,
+    version_id: int,
+) -> int:
+    """Score every posting with the trained classifier and update rankings.
+
+    Returns the number of postings scored.
+    """
+
+    dim = get_embedding_dim()
+    postings = db.get_all_postings_with_embeddings()
+    if not postings:
+        return 0
+
+    # Create a pipeline config that uses the classifier as the final scorer
+    new_config = RankingConfig(
+        steps=[
+            StepConfig(step_type="scorer", name="similarity", params={}, enabled=True),
+            StepConfig(step_type="scorer", name="classifier", params={}, enabled=True),
+        ],
+        final_scorer_name="classifier",
+    )
+    pipeline_config_id = db.insert_pipeline_config(
+        user_id,
+        new_config,
+        description=f"classifier v{version_id}",
+    )
+
+    scored = 0
+    for posting in postings:
+        if posting.embedding is None:
+            continue
+        try:
+            emb = deserialize_embedding(posting.embedding, dim)
+        except (ValueError, TypeError):
+            continue
+        cls_score = float(scorer.model.predict_proba(emb.reshape(1, -1))[0][1])
+        sim_score = db.get_similarity_score(user_id, posting.id) or 0.0
+        db.upsert_classifier_score(user_id, posting.id, cls_score, version_id)
+        db.upsert_ranking_score(
+            user_id=user_id,
+            posting_id=posting.id,
+            pipeline_config_id=pipeline_config_id,
+            composite_score=cls_score,
+            component_scores={"classifier": cls_score, "similarity": sim_score},
+        )
+        scored += 1
+
+    log.info(
+        "Re-scored %d postings with classifier v%d (pipeline config %d)",
+        scored,
+        version_id,
+        pipeline_config_id,
+    )
+    return scored

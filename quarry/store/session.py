@@ -15,6 +15,7 @@ from typing import Generator
 
 from sqlalchemy import Engine, create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import NullPool
 
 from quarry.store.models import _pragma_foreign_keys_on
 
@@ -30,6 +31,9 @@ def get_engine(db_path: str | Path | None = None) -> Engine:
     Engines are cached per database URL so tests using tmp_path
     get isolated engines per test database. SQLite requires a single
     writer per database, so a singleton per URL is appropriate.
+
+    Uses NullPool to avoid stale-connection issues that QueuePool can
+    cause with SQLite across threads (SQLAlchemy #9186).
 
     Args:
         db_path: Path to SQLite database. Uses config if not provided.
@@ -50,6 +54,8 @@ def get_engine(db_path: str | Path | None = None) -> Engine:
         engine = create_engine(
             db_url,
             echo=False,
+            poolclass=NullPool,
+            connect_args={"timeout": 30.0},
         )
         event.listen(engine, "connect", _pragma_foreign_keys_on)
         _engines[db_url] = engine
