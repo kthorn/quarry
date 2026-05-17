@@ -108,6 +108,20 @@ def seed(db: Database | None = None, seed_file: str | None = None) -> tuple[int,
         company_id = db.insert_company(company)
         existing_companies.add(company.name.lower())
         log.info("Seeded company: %s", company.name)
+
+        # Generate description for newly seeded company
+        try:
+            from quarry.resolve.description import generate_company_description
+
+            company.id = company_id
+            desc, source = generate_company_description(company)
+            db.update_company_description(company_id, desc, source)
+            log.info("Generated description for %s (%s)", company.name, source)
+        except Exception:
+            log.warning(
+                "Description generation failed for %s", company.name, exc_info=True
+            )
+
         # Upsert watchlist with per-user fields from seed data
         watchlist = db.get_watchlist(user_id=1, active_only=False)
         for wi in watchlist:
@@ -147,6 +161,43 @@ def seed_command(seed_file):
     db = init_db(settings.db_path)
     inserted, skipped = seed(db=db, seed_file=seed_file)
     click.echo(f"Seeded {inserted} entries, skipped {skipped}")
+
+
+@cli.command("backfill-descriptions")
+@click.option(
+    "--all",
+    "backfill_all",
+    is_flag=True,
+    help="Backfill all companies without descriptions",
+)
+def backfill_descriptions(backfill_all: bool) -> None:
+    """Generate descriptions for companies that don't have one."""
+    from quarry.resolve.description import generate_company_description
+
+    db = Database(settings.db_path)
+    companies = db.get_all_companies(active_only=False)
+    to_process = [c for c in companies if not c.description]
+
+    if not to_process:
+        click.echo("All companies already have descriptions.")
+        return
+
+    click.echo(f"Generating descriptions for {len(to_process)} companies...")
+    success = 0
+    failed = 0
+
+    for company in to_process:
+        try:
+            desc, source = generate_company_description(company)
+            assert company.id is not None
+            db.update_company_description(company.id, desc, source)
+            success += 1
+            click.echo(f"  \u2713 {company.name} ({source})")
+        except Exception as e:
+            failed += 1
+            click.echo(f"  \u2717 {company.name}: {e}")
+
+    click.echo(f"Done: {success} succeeded, {failed} failed.")
 
 
 @cli.command(name="normalize-locations")

@@ -105,6 +105,19 @@ def resolve_or_create_search_company(
             resolve_status=resolve_status,  # type: ignore[arg-type]
         )
         company.id = db.insert_company(company)
+
+        # Generate description for newly discovered company
+        try:
+            from quarry.resolve.description import generate_company_description
+
+            desc, source = generate_company_description(company)
+            db.update_company_description(company.id, desc, source)
+            log.info("Generated description for %s (%s)", company.name, source)
+        except Exception:
+            log.warning(
+                "Description generation failed for %s", company.name, exc_info=True
+            )
+
         # insert_company auto-creates a watchlist entry with active=True.
         # Override it: search-discovered companies start inactive.
         db.upsert_watchlist_item(

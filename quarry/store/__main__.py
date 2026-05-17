@@ -75,6 +75,16 @@ def add_company(name: str, domain: str | None, careers_url: str | None) -> None:
     company.id = db.insert_company(company)
     click.echo(f"Added company: {name} (id={company.id})")
 
+    # Generate description for newly added company
+    try:
+        from quarry.resolve.description import generate_company_description
+
+        desc, source = generate_company_description(company)
+        db.update_company_description(company.id, desc, source)
+        click.echo(f"Generated description ({source})")
+    except Exception:
+        click.echo("Description generation failed (will retry later)")
+
     if company.resolve_status != "resolved" and not careers_url:
         from quarry.resolve.pipeline import resolve_company
 
