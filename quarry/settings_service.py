@@ -9,7 +9,14 @@ model_dump_json() / model_validate(json.loads(...)).
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypedDict
+
+
+class JobSpyConfigDict(TypedDict):
+    sites: list[str]
+    results_wanted: int
+    hours_old: int
+
 
 if TYPE_CHECKING:
     from quarry.config import (
@@ -145,7 +152,7 @@ class UserSettingsService:
         self.db.save_user_setting(self.user_id, "location_filter", json_str)
         self._cache["location_filter"] = json_str
 
-    def get_jobspy_config(self) -> dict[str, int | list[str]]:
+    def get_jobspy_config(self) -> JobSpyConfigDict:
         """Return dict with keys: sites, results_wanted, hours_old.
 
         Returns config.yaml defaults if no DB override.

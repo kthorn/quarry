@@ -32,6 +32,7 @@ from quarry.pipeline.embedder import (
 )
 from quarry.pipeline.extract import extract
 from quarry.pipeline.filter import FILTER_STEPS
+from quarry.settings_service import UserSettingsService
 from quarry.store.db import Database
 
 log = logging.getLogger(__name__)
@@ -47,11 +48,13 @@ CRAWL_LOG_COLUMNS = [
 ]
 
 
-def _ensure_ideal_embedding(db: Database, user_id: int = 1) -> None:
-    """Ensure ideal role embedding exists in DB. Compute from config if missing."""
+def _ensure_ideal_embedding(
+    db: Database, user_id: int, ss: UserSettingsService
+) -> None:
+    """Ensure ideal role embedding exists in DB. Compute from user settings if missing."""
     ideal = get_ideal_embedding(db, user_id)
     if ideal is None:
-        desc = settings.ideal_role_description
+        desc = ss.get_ideal_role_description()
         if not desc:
             log.warning(
                 "ideal_role_description is empty - similarity scoring will use zero vector"
@@ -145,9 +148,16 @@ def resolve_or_create_search_company(
     return company
 
 
-def _crawl_search_queries(db: Database, user_id: int = 1) -> list[RawPosting]:
+def _crawl_search_queries(
+    db: Database, user_id: int, ss: UserSettingsService
+) -> list[RawPosting]:
     """Crawl job boards for all active search queries via JobSpy."""
-    client = JobSpyClient()
+    jsc = ss.get_jobspy_config()
+    client = JobSpyClient(
+        sites=jsc["sites"],
+        results_wanted=jsc["results_wanted"],
+        hours_old=jsc["hours_old"],
+    )
     queries = db.get_active_search_queries(user_id=user_id)
     if not queries:
         log.info("No active search queries found")
@@ -256,11 +266,34 @@ def run_once(db: Database, user_id: int = 1) -> dict:
     Returns a summary dict with counts. Also writes a CSV crawl log with every
     posting found and its similarity score.
     """
-    _ensure_ideal_embedding(db, user_id)
+    ss = UserSettingsService(db, user_id)
+    _ensure_ideal_embedding(db, user_id, ss)
     ideal_embedding = get_ideal_embedding(db, user_id)
     if ideal_embedding is not None:
         log.info("Ideal embedding loaded (dim=%d)", len(ideal_embedding))
-    filters_config = settings.filters
+
+    # Build filters from user settings (or config.yaml defaults)
+
+    kw_bl = ss.get_keyword_blocklist()
+    if kw_bl is None:
+        kw_bl = settings.filters.keyword_blocklist if settings.filters else None
+    tk = ss.get_title_keywords()
+    if tk is None:
+        tk = settings.filters.title_keyword if settings.filters else None
+    cf = ss.get_company_filter()
+    if cf is None:
+        cf = settings.filters.company_filter if settings.filters else None
+    lf = ss.get_location_filter()
+    if lf is None:
+        lf = settings.filters.location_filter if settings.filters else None
+
+    filters_config = FiltersConfig(
+        keyword_blocklist=kw_bl,
+        title_keyword=tk,
+        company_filter=cf,
+        location_filter=lf,
+    )
+    filters_config.normalize_config()
 
     companies = db.get_all_companies(active_only=True)
     log.info("Phase: crawling %d active companies", len(companies))
@@ -389,7 +422,7 @@ def run_once(db: Database, user_id: int = 1) -> dict:
         except Exception as e:
             log.error("Failed to record crawl run for %s: %s", company.name, e)
 
-    search_postings = _crawl_search_queries(db, user_id=user_id)
+    search_postings = _crawl_search_queries(db, user_id=user_id, ss=ss)
     total_found += len(search_postings)
     log.info("Phase: processing %d search query results", len(search_postings))
 
