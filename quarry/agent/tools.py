@@ -271,8 +271,10 @@ def recompute_similarity(db: Database | None = None, user_id: int = 1) -> None:
         db = Database(settings.db_path)
 
     from quarry.agent.scheduler import _ensure_ideal_embedding
+    from quarry.settings_service import UserSettingsService
 
-    _ensure_ideal_embedding(db, user_id)
+    ss = UserSettingsService(db, user_id)
+    _ensure_ideal_embedding(db, user_id, ss)
     ideal_embedding = get_ideal_embedding(db, user_id)
     if ideal_embedding is None:
         print("No ideal role embedding found. Set ideal_role_description in config.")

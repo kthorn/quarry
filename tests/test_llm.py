@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from botocore.exceptions import ClientError
+
 from quarry.llm import LLMError, complete
 
 

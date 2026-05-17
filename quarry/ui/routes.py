@@ -13,6 +13,7 @@ from flask import (
 )
 
 from quarry.models import UserLabel, UserWatchlistItem
+from quarry.settings_service import UserSettingsService
 from quarry.store.db import Database
 
 logger = logging.getLogger(__name__)
@@ -337,6 +338,236 @@ def regenerate_description(company_id):
         flash(f"Description generation failed for {company.name}: {e}")
 
     return redirect(url_for("ui.companies"))
+
+
+@bp.route("/settings")
+def settings():
+    db = get_db()
+    ss = UserSettingsService(db, user_id=USER_ID)
+
+    section = request.args.get("section", "search-queries")
+
+    # Load all current values
+    search_queries = db.get_all_search_queries(user_id=USER_ID)
+    ideal_role = ss.get_ideal_role_description()
+    similarity = ss.get_similarity_threshold()
+    kw_bl = ss.get_keyword_blocklist()
+    title_kw = ss.get_title_keywords()
+    company_f = ss.get_company_filter()
+    location_f = ss.get_location_filter()
+    jobspy = ss.get_jobspy_config()
+
+    # Build defaults for empty configs (for template rendering)
+    if kw_bl is None:
+        from quarry.config import KeywordBlocklistConfig
+
+        kw_bl = KeywordBlocklistConfig()
+    if title_kw is None:
+        from quarry.config import TitleKeywordConfig
+
+        title_kw = TitleKeywordConfig()
+    if company_f is None:
+        from quarry.config import CompanyFilterConfig
+
+        company_f = CompanyFilterConfig()
+    if location_f is None:
+        from quarry.config import LocationFilterConfig
+
+        location_f = LocationFilterConfig()
+
+    # Known job board sites for checkboxes
+    from quarry.crawlers.jobspy_client import SITE_NAME_TO_SOURCE_TYPE
+
+    known_sites = list(SITE_NAME_TO_SOURCE_TYPE.keys())
+
+    return render_template(
+        "settings.html",
+        section=section,
+        search_queries=search_queries,
+        ideal_role=ideal_role,
+        similarity=similarity,
+        kw_bl=kw_bl,
+        title_kw=title_kw,
+        company_f=company_f,
+        location_f=location_f,
+        jobspy=jobspy,
+        known_sites=known_sites,
+    )
+
+
+@bp.route("/settings/queries/add", methods=["POST"])
+def settings_queries_add():
+    db = get_db()
+    query_text = request.form.get("query_text", "").strip()
+    reason = request.form.get("reason", "").strip() or None
+
+    if not query_text:
+        flash("Query text is required.")
+        return redirect(url_for("ui.settings", section="search-queries"))
+
+    from quarry.models import UserSearchQuery
+
+    try:
+        sq = UserSearchQuery(
+            user_id=USER_ID,
+            query_text=query_text,
+            active=True,
+            added_reason=reason,
+        )
+        db.insert_search_query(sq, user_id=USER_ID)
+        flash(f"Added search query: {query_text}")
+    except Exception:
+        flash("Query already exists.")
+
+    return redirect(url_for("ui.settings", section="search-queries"))
+
+
+@bp.route("/settings/queries/<int:query_id>/retire", methods=["POST"])
+def settings_queries_retire(query_id):
+    db = get_db()
+    reason = request.form.get("reason", "").strip() or None
+    db.deactivate_search_query(query_id, user_id=USER_ID, retired_reason=reason)
+    flash("Query retired.")
+    return redirect(url_for("ui.settings", section="search-queries"))
+
+
+@bp.route("/settings/role-description", methods=["POST"])
+def settings_role_description():
+    db = get_db()
+    ss = UserSettingsService(db, user_id=USER_ID)
+    text = request.form.get("description", "").strip()
+
+    try:
+        ss.set_ideal_role_description(text)
+        flash("Ideal role description saved.")
+    except Exception as e:
+        flash(f"Error saving role description: {e}")
+
+    return redirect(url_for("ui.settings", section="role-description"))
+
+
+@bp.route("/settings/similarity", methods=["POST"])
+def settings_similarity():
+    db = get_db()
+    ss = UserSettingsService(db, user_id=USER_ID)
+    try:
+        value = float(request.form.get("threshold", "0.0"))
+        value = max(0.0, min(1.0, value))
+        ss.set_similarity_threshold(value)
+        flash(f"Similarity threshold set to {value:.2f}.")
+    except (ValueError, TypeError):
+        flash("Invalid threshold value.")
+
+    return redirect(url_for("ui.settings", section="similarity"))
+
+
+@bp.route("/settings/blocklist", methods=["POST"])
+def settings_blocklist():
+    db = get_db()
+    ss = UserSettingsService(db, user_id=USER_ID)
+
+    keywords_text = request.form.get("keywords", "")
+    passlist_text = request.form.get("passlist", "")
+
+    keywords = [k.strip() for k in keywords_text.split("\n") if k.strip()]
+    passlist = [p.strip() for p in passlist_text.split("\n") if p.strip()]
+
+    from quarry.config import KeywordBlocklistConfig
+
+    ss.set_keyword_blocklist(
+        KeywordBlocklistConfig(keywords=keywords, passlist=passlist)
+    )
+    flash("Keyword blocklist saved.")
+    return redirect(url_for("ui.settings", section="blocklist"))
+
+
+@bp.route("/settings/title-keywords", methods=["POST"])
+def settings_title_keywords():
+    db = get_db()
+    ss = UserSettingsService(db, user_id=USER_ID)
+
+    text = request.form.get("keywords", "")
+    keywords = [k.strip() for k in text.split("\n") if k.strip()]
+
+    from quarry.config import TitleKeywordConfig
+
+    ss.set_title_keywords(TitleKeywordConfig(keywords=keywords))
+    flash("Title keywords saved.")
+    return redirect(url_for("ui.settings", section="title-keywords"))
+
+
+@bp.route("/settings/company-filter", methods=["POST"])
+def settings_company_filter():
+    db = get_db()
+    ss = UserSettingsService(db, user_id=USER_ID)
+
+    allow_text = request.form.get("allow", "")
+    deny_text = request.form.get("deny", "")
+
+    allow = [a.strip() for a in allow_text.split("\n") if a.strip()]
+    deny = [d.strip() for d in deny_text.split("\n") if d.strip()]
+
+    from quarry.config import CompanyFilterConfig
+
+    ss.set_company_filter(CompanyFilterConfig(allow=allow, deny=deny))
+    flash("Company filter saved.")
+    return redirect(url_for("ui.settings", section="company-filter"))
+
+
+@bp.route("/settings/location", methods=["POST"])
+def settings_location():
+    db = get_db()
+    ss = UserSettingsService(db, user_id=USER_ID)
+
+    cities_text = request.form.get("target_location", "")
+    accept_remote = request.form.get("accept_remote") == "on"
+    nearby_radius_str = request.form.get("nearby_radius", "")
+    states_text = request.form.get("accept_states", "")
+    regions_text = request.form.get("accept_regions", "")
+
+    cities = [c.strip() for c in cities_text.split("\n") if c.strip()]
+    states = [s.strip() for s in states_text.split("\n") if s.strip()]
+    regions = [r.strip() for r in regions_text.split("\n") if r.strip()]
+    nearby_radius = int(nearby_radius_str) if nearby_radius_str.strip() else None
+
+    from quarry.config import LocationFilterConfig
+
+    ss.set_location_filter(
+        LocationFilterConfig(
+            target_location=cities,
+            accept_remote=accept_remote,
+            nearby_radius=nearby_radius,
+            accept_states=states,
+            accept_regions=regions,
+        )
+    )
+    flash("Location filter saved.")
+    return redirect(url_for("ui.settings", section="location"))
+
+
+@bp.route("/settings/jobspy", methods=["POST"])
+def settings_jobspy():
+    db = get_db()
+    ss = UserSettingsService(db, user_id=USER_ID)
+
+    sites = request.form.getlist("sites")
+    try:
+        results_wanted = int(request.form.get("results_wanted", "20"))
+        hours_old = int(request.form.get("hours_old", "168"))
+    except (ValueError, TypeError):
+        flash("Invalid number value.")
+        return redirect(url_for("ui.settings", section="jobspy"))
+
+    # Validate site names
+    from quarry.crawlers.jobspy_client import SITE_NAME_TO_SOURCE_TYPE
+
+    valid_sites = [s for s in sites if s in SITE_NAME_TO_SOURCE_TYPE]
+
+    ss.set_jobspy_config(
+        sites=valid_sites, results_wanted=results_wanted, hours_old=hours_old
+    )
+    flash("Job board settings saved.")
+    return redirect(url_for("ui.settings", section="jobspy"))
 
 
 @bp.route("/log")
