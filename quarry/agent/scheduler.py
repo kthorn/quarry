@@ -273,8 +273,6 @@ def run_once(db: Database, user_id: int = 1) -> dict:
         log.info("Ideal embedding loaded (dim=%d)", len(ideal_embedding))
 
     # Build filters from user settings (or config.yaml defaults).
-    # Company filter is derived from the watchlist: manually deactivated
-    # companies are denied; active and search-discovered companies pass.
 
     kw_bl = ss.get_keyword_blocklist()
     if kw_bl is None:
@@ -286,15 +284,23 @@ def run_once(db: Database, user_id: int = 1) -> dict:
     if lf is None:
         lf = settings.filters.location_filter if settings.filters else None
 
-    # Derive company deny list from watchlist.
-    # active=False AND added_reason!='search' = user explicitly deactivated.
+    # Build company filter from user settings (or config.yaml), then augment
+    # deny list with watchlist: manually deactivated companies are denied.
+    cf_base = ss.get_company_filter()
+    if cf_base is None:
+        cf_base = settings.filters.company_filter if settings.filters else None
+    allow = list(cf_base.allow) if cf_base else []
+    deny = list(cf_base.deny) if cf_base else []
+
     watchlist_entries = db.get_watchlist_companies(user_id=user_id)
-    deny_companies = [
+    watchlist_deny = [
         w["name"]
         for w in watchlist_entries
         if not w["active"] and w.get("added_reason") != "search"
     ]
-    cf = CompanyFilterConfig(allow=[], deny=deny_companies)
+    # Merge watchlist denies into configured deny list (no duplicates)
+    deny = list({d.lower(): d for d in deny + watchlist_deny}.values())
+    cf = CompanyFilterConfig(allow=allow, deny=deny)
 
     filters_config = FiltersConfig(
         keyword_blocklist=kw_bl,

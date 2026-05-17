@@ -20,6 +20,7 @@ class JobSpyConfigDict(TypedDict):
 
 if TYPE_CHECKING:
     from quarry.config import (
+        CompanyFilterConfig,
         KeywordBlocklistConfig,
         LocationFilterConfig,
         TitleKeywordConfig,
@@ -135,6 +136,21 @@ class UserSettingsService:
         json_str = config.model_dump_json()
         self.db.save_user_setting(self.user_id, "location_filter", json_str)
         self._cache["location_filter"] = json_str
+
+    def get_company_filter(self) -> CompanyFilterConfig | None:
+        """Return CompanyFilterConfig from DB, or None (use config.yaml)."""
+        val = self._cache.get("company_filter")
+        if val is None:
+            return None
+        from quarry.config import CompanyFilterConfig
+
+        return CompanyFilterConfig.model_validate(json.loads(val))
+
+    def set_company_filter(self, config: CompanyFilterConfig) -> None:
+        """Serialize to JSON {allow:[], deny:[]}."""
+        json_str = config.model_dump_json()
+        self.db.save_user_setting(self.user_id, "company_filter", json_str)
+        self._cache["company_filter"] = json_str
 
     def get_jobspy_config(self) -> JobSpyConfigDict:
         """Return dict with keys: sites, results_wanted, hours_old.
