@@ -1,4 +1,5 @@
 import logging
+import threading
 from typing import Literal
 
 from flask import (
@@ -266,6 +267,28 @@ def activate_company(company_id):
             notes=existing_wl.notes if existing_wl else None,
         )
     )
+
+    # Defer description generation if missing
+    if not company.description:
+
+        def _generate_in_background(cid: int):
+            try:
+                from quarry.resolve.description import generate_company_description
+
+                c = db.get_company(cid)
+                if c and not c.description:
+                    desc, source = generate_company_description(c)
+                    db.update_company_description(cid, desc, source)
+            except Exception:
+                db.update_company_description(cid, None, "pending")
+
+        db.update_company_description(company.id, None, "pending")
+        threading.Thread(
+            target=_generate_in_background,
+            args=(company.id,),
+            daemon=True,
+        ).start()
+
     return redirect(url_for("ui.companies"))
 
 
@@ -278,6 +301,41 @@ def toggle_company(company_id):
         return "Company not in watchlist", 404
     item.active = not item.active
     db.upsert_watchlist_item(item)
+    return redirect(url_for("ui.companies"))
+
+
+@bp.route("/companies/<int:company_id>/description", methods=["POST"])
+def update_description(company_id):
+    """Update a company's description from the UI."""
+    db = get_db()
+    company = db.get_company(company_id)
+    if company is None:
+        return "Company not found", 404
+
+    description = request.form.get("description", "").strip()
+    db.update_company_description(company_id, description or None, "manual")
+    flash(f"Description updated for {company.name}")
+    return redirect(url_for("ui.companies"))
+
+
+@bp.route("/companies/<int:company_id>/regenerate", methods=["POST"])
+def regenerate_description(company_id):
+    """Regenerate a company's description from the UI."""
+    db = get_db()
+    company = db.get_company(company_id)
+    if company is None:
+        return "Company not found", 404
+
+    try:
+        from quarry.resolve.description import generate_company_description
+
+        desc, source = generate_company_description(company)
+        db.update_company_description(company_id, desc, source)
+        flash(f"Description regenerated for {company.name} ({source})")
+    except Exception as e:
+        db.update_company_description(company_id, None, "pending")
+        flash(f"Description generation failed for {company.name}: {e}")
+
     return redirect(url_for("ui.companies"))
 
 

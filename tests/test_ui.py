@@ -749,6 +749,122 @@ class TestPostingsTemplateScanButton:
             assert 'name="q" value=""' in html
 
 
+class TestCompanyDescriptionRoutes:
+    """Task 5: Company description update and regenerate routes."""
+
+    def test_update_description(self, client, tmp_path):
+        """POST /companies/<id>/description updates the description."""
+        db = Database(tmp_path / "test.db")
+        company = Company(name="TestCo", domain="testco.com")
+        company_id = db.insert_company(company)
+
+        response = client.post(
+            f"/companies/{company_id}/description",
+            data={"description": "TestCo builds tests."},
+            follow_redirects=True,
+        )
+        assert response.status_code == 200
+
+        updated = db.get_company(company_id)
+        assert updated is not None
+        assert updated.description == "TestCo builds tests."
+        assert updated.description_source == "manual"
+
+    def test_regenerate_description(self, client, tmp_path, monkeypatch):
+        """POST /companies/<id>/regenerate triggers description generation."""
+        db = Database(tmp_path / "test.db")
+        company = Company(name="TestCo", domain="testco.com")
+        company_id = db.insert_company(company)
+
+        def mock_generate(company):
+            return "Generated description.", "wikipedia"
+
+        monkeypatch.setattr(
+            "quarry.resolve.description.generate_company_description",
+            mock_generate,
+        )
+
+        response = client.post(
+            f"/companies/{company_id}/regenerate",
+            follow_redirects=True,
+        )
+        assert response.status_code == 200
+
+        updated = db.get_company(company_id)
+        assert updated is not None
+        assert updated.description == "Generated description."
+        assert updated.description_source == "wikipedia"
+
+    def test_regenerate_description_handles_error(self, client, tmp_path, monkeypatch):
+        """POST /companies/<id>/regenerate sets description to pending on error."""
+        db = Database(tmp_path / "test.db")
+        company = Company(name="TestCo", domain="testco.com")
+        company_id = db.insert_company(company)
+
+        def mock_generate(company):
+            raise RuntimeError("LLM unavailable")
+
+        monkeypatch.setattr(
+            "quarry.resolve.description.generate_company_description",
+            mock_generate,
+        )
+
+        response = client.post(
+            f"/companies/{company_id}/regenerate",
+            follow_redirects=True,
+        )
+        assert response.status_code == 200
+
+        updated = db.get_company(company_id)
+        assert updated is not None
+        assert updated.description is None
+        assert updated.description_source == "pending"
+
+    def test_update_description_404_on_missing_company(self, client):
+        """POST /companies/<id>/description returns 404 for missing company."""
+        response = client.post(
+            "/companies/99999/description",
+            data={"description": "Nope"},
+        )
+        assert response.status_code == 404
+
+
+class TestActivateCompanyDeferredDescription:
+    """Task 5: activate_company() defers description generation in background."""
+
+    def test_activate_sets_pending_on_no_description(self, client, tmp_path):
+        """Activating a company without description sets source=pending."""
+        db = Database(tmp_path / "test.db")
+        from quarry.models import UserWatchlistItem
+
+        # Create a discovered (inactive) company without description
+        company = Company(
+            name="NewCo",
+            domain="newco.com",
+            resolve_status="resolved",
+            description=None,
+            description_source=None,
+        )
+        company_id = db.insert_company(company)
+        # Make it inactive as if discovered via search
+        db.upsert_watchlist_item(
+            UserWatchlistItem(
+                user_id=1, company_id=company_id, active=False, added_reason="search"
+            )
+        )
+
+        response = client.post(
+            f"/companies/{company_id}/activate",
+            follow_redirects=True,
+        )
+        assert response.status_code == 200
+
+        updated = db.get_company(company_id)
+        assert updated is not None
+        # Should be set to pending (deferred generation started in background)
+        assert updated.description_source == "pending"
+
+
 class TestCompaniesDiscovered:
     def test_companies_page_shows_discovered(self, app, tmp_path):
         db = Database(tmp_path / "test.db")
