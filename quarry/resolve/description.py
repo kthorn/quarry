@@ -55,7 +55,12 @@ def fetch_wikipedia_summary(company_name: str) -> str | None:
     title = _sanitize_wikipedia_title(company_name)
     url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{title}"
     try:
-        response = httpx.get(url, timeout=10.0, follow_redirects=True)
+        response = httpx.get(
+            url,
+            timeout=10.0,
+            follow_redirects=True,
+            headers={"User-Agent": "Quarry/0.1"},
+        )
         response.raise_for_status()
         data = response.json()
         extract = data.get("extract")

@@ -60,7 +60,7 @@ def _get_openrouter_client() -> httpx.Client:
 
 def _call_bedrock(prompt: str, model: str | None = None) -> str:
     client = _get_bedrock_client()
-    model_id = model or "anthropic.claude-3-haiku-20240307-v1:0"
+    model_id = model or "us.anthropic.claude-haiku-4-5-20251001-v1:0"
     body = {
         "anthropic_version": "bedrock-2023-05-31",
         "max_tokens": 1024,
