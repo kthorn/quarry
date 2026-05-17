@@ -1,6 +1,6 @@
 # STATUS
 
-Last updated: 2026-05-16 (company page overhaul)
+Last updated: 2026-05-17 (settings UI + docs cleanup)
 
 ## Phase 1 — MVP Progress
 
@@ -35,6 +35,7 @@ Last updated: 2026-05-16 (company page overhaul)
 - **RUNBOOK.md**: pre-execution checklist and operational guide
 - **Bug fix (2026-05-03)**: `session_scope()` now invalidates poisoned connections after rollback, preventing `SingletonThreadPool` from handing the same broken connection to the next session (root cause of cascading "readonly database" crashes). `insert_crawl_run` in `run_once()` wrapped in try/except as defense-in-depth.
 - **Company page overhaul**: card-based UI with LLM-generated descriptions (Wikipedia → website → LLM), inline editing, em-dash cleanup; LLM client module (`quarry/llm.py`); description generation pipeline (`quarry/resolve/description.py`); trigger integrations on seed/scheduler/add-company; backfill-descriptions CLI; plan refined via pi-refine (8 fixes across 2 review iterations)
+- **Settings UI**: (`feature/settings-ui` branch) unified settings page with sidebar layout (8 sections), `UserSettingsService` with config.yaml fallback, search query management (add/retire), all filter configs editable from web UI, JobSpy settings, scheduler integration via service; design spec refined via pi-refine (3 iterations, 2 models); 557 tests passing
 
 ## Completed Plans
 
