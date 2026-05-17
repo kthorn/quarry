@@ -460,3 +460,153 @@ pre {
 .company-actions {
 	margin-top: 0.5rem;
 }
+
+/* Settings page — sidebar layout */
+.settings-layout {
+	display: flex;
+	gap: 1.5rem;
+	min-height: 60vh;
+}
+
+.settings-sidebar {
+	width: 200px;
+	flex-shrink: 0;
+	border-right: 1px solid #ddd;
+	padding-right: 1rem;
+}
+
+.settings-sidebar a {
+	display: block;
+	padding: 0.5rem 0.75rem;
+	text-decoration: none;
+	color: #555;
+	border-radius: 4px;
+	margin-bottom: 0.25rem;
+	font-size: 0.9rem;
+}
+
+.settings-sidebar a:hover {
+	background: #eee;
+	color: #000;
+}
+
+.settings-sidebar a.active {
+	background: #007bff;
+	color: #fff;
+}
+
+.settings-main {
+	flex: 1;
+	min-width: 0;
+}
+
+.settings-main h2 {
+	margin-top: 0;
+}
+
+/* Settings forms */
+.settings-form {
+	margin-bottom: 1.5rem;
+}
+
+.settings-form label {
+	display: block;
+	font-weight: 600;
+	margin-bottom: 0.25rem;
+	font-size: 0.9rem;
+}
+
+.settings-form textarea,
+.settings-form input[type="text"],
+.settings-form input[type="number"] {
+	width: 100%;
+	padding: 0.5rem;
+	border: 1px solid #ddd;
+	border-radius: 4px;
+	font-size: 0.9rem;
+	font-family: monospace;
+	margin-bottom: 0.5rem;
+}
+
+.settings-form textarea {
+	resize: vertical;
+}
+
+.settings-form input[type="checkbox"] {
+	margin-right: 0.25rem;
+}
+
+.settings-form .help-text {
+	font-size: 0.8rem;
+	color: #888;
+	margin-bottom: 0.5rem;
+}
+
+.settings-form .checkbox-group {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.75rem;
+	margin-bottom: 0.5rem;
+}
+
+.settings-form .checkbox-group label {
+	font-weight: normal;
+	font-size: 0.9rem;
+}
+
+.settings-form .number-row {
+	display: flex;
+	gap: 1rem;
+	margin-bottom: 0.5rem;
+}
+
+.settings-form .number-row > div {
+	flex: 1;
+}
+
+.settings-form .number-row label {
+	font-size: 0.8rem;
+}
+
+/* Query table */
+.query-table {
+	width: 100%;
+	border-collapse: collapse;
+	margin-bottom: 1rem;
+}
+
+.query-table th,
+.query-table td {
+	padding: 0.4rem 0.5rem;
+	text-align: left;
+	border-bottom: 1px solid #eee;
+}
+
+.query-table th {
+	font-size: 0.8rem;
+	color: #888;
+	font-weight: 600;
+}
+
+.query-table td {
+	font-size: 0.9rem;
+}
+
+.retired-queries {
+	margin-top: 1.5rem;
+	padding-top: 1rem;
+	border-top: 1px solid #eee;
+}
+
+.retired-queries h3 {
+	font-size: 0.9rem;
+	color: #888;
+	margin-bottom: 0.5rem;
+}
+
+.small-input {
+	font-size: 0.8rem;
+	padding: 0.2rem 0.4rem;
+	border: 1px solid #ddd;
+	border-radius: 3px;
+}

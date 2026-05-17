@@ -1,0 +1,215 @@
+{% extends "base.html" %}
+{% block title %}Settings — Quarry{% endblock %}
+{% block content %}
+<div class="settings-layout">
+  <div class="settings-sidebar">
+    {% set sections = [
+      ("search-queries", "Search Queries"),
+      ("role-description", "Role Description"),
+      ("similarity", "Similarity"),
+      ("blocklist", "Blocklist"),
+      ("title-keywords", "Title Keywords"),
+      ("company-filter", "Company Filter"),
+      ("location", "Location"),
+      ("jobspy", "Job Boards"),
+    ] %}
+    {% for sid, label in sections %}
+      <a href="{{ url_for('ui.settings', section=sid) }}"
+         class="{% if section == sid %}active{% endif %}">{{ label }}</a>
+    {% endfor %}
+  </div>
+
+  <div class="settings-main">
+    {% if section == "search-queries" %}
+      {% set active_queries = search_queries | selectattr("active", "equalto", true) | list %}
+      {% set retired_queries = search_queries | selectattr("active", "equalto", false) | list %}
+
+      <h2>Search Queries</h2>
+
+      {% if active_queries %}
+      <table class="query-table">
+        <thead>
+          <tr>
+            <th>Query</th>
+            <th>Site</th>
+            <th>Reason</th>
+            <th>Found</th>
+            <th>+ Labels</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for q in active_queries %}
+          <tr>
+            <td>{{ q.query_text }}</td>
+            <td>{{ q.site if q.site else "—" }}</td>
+            <td>{{ q.added_reason if q.added_reason else "—" }}</td>
+            <td>{{ q.postings_found }}</td>
+            <td>{{ q.positive_labels }}</td>
+            <td>
+              <form method="post" action="{{ url_for('ui.settings_queries_retire', query_id=q.id) }}" class="inline">
+                <input type="text" name="reason" placeholder="Retire reason…" class="small-input" />
+                <button type="submit" class="small btn-negative">Retire</button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <p class="small">No active search queries.</p>
+      {% endif %}
+
+      <form method="post" action="{{ url_for('ui.settings_queries_add') }}" class="settings-form" style="margin-top:1rem;">
+        <label for="query_text">Add Query</label>
+        <input type="text" name="query_text" id="query_text" placeholder="e.g. senior software engineer" required />
+        <input type="text" name="reason" id="reason" placeholder="Reason (optional)" />
+        <button type="submit" class="small btn-applied">Add</button>
+      </form>
+
+      {% if retired_queries %}
+      <div class="retired-queries">
+        <h3>Retired Queries</h3>
+        <table class="query-table">
+          <thead>
+            <tr>
+              <th>Query</th>
+              <th>Site</th>
+              <th>Retired Reason</th>
+              <th>Found</th>
+              <th>+ Labels</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for q in retired_queries %}
+            <tr>
+              <td>{{ q.query_text }}</td>
+              <td>{{ q.site if q.site else "—" }}</td>
+              <td>{{ q.retired_reason if q.retired_reason else "—" }}</td>
+              <td>{{ q.postings_found }}</td>
+              <td>{{ q.positive_labels }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
+
+    {% elif section == "role-description" %}
+      <h2>Ideal Role Description</h2>
+      <form method="post" action="{{ url_for('ui.settings_role_description') }}" class="settings-form">
+        <label for="description">Describe your ideal role</label>
+        <textarea name="description" id="description" rows="8">{{ ideal_role if ideal_role else '' }}</textarea>
+        <button type="submit" class="small btn-applied">Save</button>
+      </form>
+
+    {% elif section == "similarity" %}
+      <h2>Similarity Threshold</h2>
+      <p class="help-text">Postings with a similarity score below this threshold are classified as "not a match."</p>
+      <form method="post" action="{{ url_for('ui.settings_similarity') }}" class="settings-form">
+        <label for="threshold">Threshold</label>
+        <input type="number" name="threshold" id="threshold" step="0.05" min="0" max="1"
+               value="{{ similarity if similarity is not none else 0.35 }}" />
+        <button type="submit" class="small btn-applied">Save</button>
+      </form>
+
+    {% elif section == "blocklist" %}
+      <h2>Keyword Blocklist</h2>
+      <form method="post" action="{{ url_for('ui.settings_blocklist') }}" class="settings-form">
+        <label for="keywords">Keywords</label>
+        <p class="help-text">One keyword per line. Postings containing any of these keywords in their title or description will be rejected. Case-insensitive match.</p>
+        <textarea name="keywords" id="keywords" rows="5">{{ "\n".join(kw_bl.keywords) if kw_bl.keywords else '' }}</textarea>
+
+        <label for="passlist">Passlist</label>
+        <p class="help-text">One keyword per line. Keywords that override the blocklist — a posting that would be blocked will still pass if it matches a passlist keyword. Case-insensitive match.</p>
+        <textarea name="passlist" id="passlist" rows="5">{{ "\n".join(kw_bl.passlist) if kw_bl.passlist else '' }}</textarea>
+
+        <button type="submit" class="small btn-applied">Save Blocklist</button>
+      </form>
+
+    {% elif section == "title-keywords" %}
+      <h2>Required Title Keywords</h2>
+      <form method="post" action="{{ url_for('ui.settings_title_keywords') }}" class="settings-form">
+        <label for="title-keywords-text">Keywords</label>
+        <p class="help-text">Required Title Keywords — a posting's title MUST contain at least one of these words or it will be rejected. Leave empty to disable title filtering.</p>
+        <textarea name="keywords" id="title-keywords-text" rows="5">{{ "\n".join(title_kw.keywords) if title_kw.keywords else '' }}</textarea>
+        <button type="submit" class="small btn-applied">Save</button>
+      </form>
+
+    {% elif section == "company-filter" %}
+      <h2>Company Filter</h2>
+      <form method="post" action="{{ url_for('ui.settings_company_filter') }}" class="settings-form">
+        <label for="allow">Only allow these companies</label>
+        <p class="help-text">If Allow list is non-empty, ONLY postings from those companies pass.</p>
+        <textarea name="allow" id="allow" rows="5">{{ "\n".join(company_f.allow) if company_f.allow else '' }}</textarea>
+
+        <label for="deny">Deny these companies</label>
+        <p class="help-text">Deny blocks specific companies regardless of allow list. Case-insensitive match.</p>
+        <textarea name="deny" id="deny" rows="5">{{ "\n".join(company_f.deny) if company_f.deny else '' }}</textarea>
+
+        <button type="submit" class="small btn-applied">Save</button>
+      </form>
+
+    {% elif section == "location" %}
+      <h2>Location Filter</h2>
+      <form method="post" action="{{ url_for('ui.settings_location') }}" class="settings-form">
+        <label for="target_location">Target Cities</label>
+        <p class="help-text">One city per line (e.g. "San Francisco, CA").</p>
+        <textarea name="target_location" id="target_location" rows="4">{{ "\n".join(location_f.target_location) if location_f.target_location else '' }}</textarea>
+
+        <div class="checkbox-group">
+          <label>
+            <input type="checkbox" name="accept_remote" {{ 'checked' if location_f.accept_remote else '' }} />
+            Accept Remote
+          </label>
+        </div>
+
+        <label for="nearby_radius">Nearby Radius (miles)</label>
+        <input type="number" name="nearby_radius" id="nearby_radius"
+               value="{{ location_f.nearby_radius if location_f.nearby_radius is not none else '' }}" />
+
+        <label for="accept_states">Accept States</label>
+        <p class="help-text">One state abbreviation per line (e.g. CA, NY, TX).</p>
+        <textarea name="accept_states" id="accept_states" rows="3">{{ "\n".join(location_f.accept_states) if location_f.accept_states else '' }}</textarea>
+
+        <label for="accept_regions">Accept Regions</label>
+        <p class="help-text">One region per line (e.g. Bay Area, Pacific Northwest).</p>
+        <textarea name="accept_regions" id="accept_regions" rows="3">{{ "\n".join(location_f.accept_regions) if location_f.accept_regions else '' }}</textarea>
+
+        <button type="submit" class="small btn-applied">Save</button>
+      </form>
+
+    {% elif section == "jobspy" %}
+      <h2>Job Boards</h2>
+      <form method="post" action="{{ url_for('ui.settings_jobspy') }}" class="settings-form">
+        <label>Enabled Sites</label>
+        <div class="checkbox-group">
+          {% for site_name in known_sites %}
+          <label>
+            <input type="checkbox" name="sites" value="{{ site_name }}"
+                   {{ 'checked' if site_name in jobspy.sites else '' }} />
+            {{ site_name }}
+          </label>
+          {% endfor %}
+        </div>
+
+        <div class="number-row">
+          <div>
+            <label for="results_wanted">Results Wanted</label>
+            <input type="number" name="results_wanted" id="results_wanted"
+                   value="{{ jobspy.results_wanted }}" />
+          </div>
+          <div>
+            <label for="hours_old">Hours Old</label>
+            <input type="number" name="hours_old" id="hours_old"
+                   value="{{ jobspy.hours_old }}" />
+          </div>
+        </div>
+
+        <button type="submit" class="small btn-applied">Save</button>
+      </form>
+
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
