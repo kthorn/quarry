@@ -39,6 +39,8 @@ class Database:
                 ats_slug=company.ats_slug,
                 resolve_status=company.resolve_status,
                 resolve_attempts=company.resolve_attempts,
+                description=company.description,
+                description_source=company.description_source,
             )
             session.add(orm_co)
             session.flush()
@@ -132,6 +134,29 @@ class Database:
                     ats_slug=company.ats_slug,
                     resolve_status=company.resolve_status,
                     resolve_attempts=company.resolve_attempts,
+                    description=company.description,
+                    description_source=company.description_source,
+                    updated_at=func.now(),
+                )
+            )
+            session.execute(stmt)
+
+    def update_company_description(
+        self,
+        company_id: int,
+        description: str | None,
+        source: str | None,
+    ) -> None:
+        """Update a company's description and source atomically."""
+        from quarry.store.models import Company as ORMCompany
+
+        with session_scope(engine=self.engine) as session:
+            stmt = (
+                update(ORMCompany)
+                .where(ORMCompany.id == company_id)
+                .values(
+                    description=description,
+                    description_source=source,
                     updated_at=func.now(),
                 )
             )
@@ -1132,6 +1157,8 @@ class Database:
                 ORMCompany.ats_slug,
                 ORMCompany.resolve_status,
                 ORMCompany.resolve_attempts,
+                ORMCompany.description,
+                ORMCompany.description_source,
                 ORMCompany.created_at,
                 ORMCompany.updated_at,
                 ORMWatchlist.active,

@@ -81,6 +81,7 @@ digest_*.txt
 # pi
 .pi/
 .pi-lens/
+.superpowers/
 
 # crawl logs
 crawl_log_*.csv

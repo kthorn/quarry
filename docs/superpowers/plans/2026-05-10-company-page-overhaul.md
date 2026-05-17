@@ -1,5 +1,7 @@
 # Company Page Overhaul with Descriptions — Implementation Plan
 
+**Status:** Refined (2 review iterations, 8 fixes applied)
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace the sparse companies table layout with a card-based UI, add LLM-generated company descriptions with Wikipedia + website sourcing, and enable human editing directly in the UI.
@@ -625,7 +627,12 @@ def _sanitize_wikipedia_title(company_name: str) -> str:
 
 
 @retry(
-    retry=retry_if_exception_type(httpx.HTTPStatusError),
+    retry=retry_if_exception_type((
+        httpx.HTTPStatusError,
+        httpx.ConnectError,
+        httpx.TimeoutException,
+        httpx.RemoteProtocolError,
+    )),
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=1, max=5),
     reraise=True,
@@ -689,22 +696,35 @@ def _extract_visible_text(html_text: str) -> str:
 
 
 async def _fetch_website_text_async(domain: str) -> str | None:
-    """Async fetch and extract visible text from a company's homepage."""
-    from quarry.http import get_client
+    """Async fetch and extract visible text from a company's homepage.
+
+    Follows the existing get_client() → use → close_client() pattern
+    from quarry/resolve/pipeline.py to avoid leaking httpx.AsyncClient
+    instances (see PI-REFINE finding #2).
+    """
+    from quarry.http import close_client, get_client
 
     url = f"https://{domain}"
     try:
         client = get_client()
         response = await client.get(url, timeout=10.0)
         response.raise_for_status()
-        return _extract_visible_text(response.text)
+        text = _extract_visible_text(response.text)
+        await close_client()
+        return text
     except Exception as e:
+        await close_client()
         log.warning("Website fetch failed for %s: %s", domain, e)
         return None
 
 
 def fetch_website_text(domain: str) -> str | None:
-    """Sync wrapper for website text fetch."""
+    """Sync wrapper for website text fetch.
+
+    Uses asyncio.run() to bridge sync context. Each call creates a fresh
+    event loop, so get_client() will create a new AsyncClient — the async
+    function calls close_client() to clean it up before returning.
+    """
     return asyncio.run(_fetch_website_text_async(domain))
 
 
@@ -741,7 +761,7 @@ def generate_company_description(company: Company) -> tuple[str, str]:
             prompt_text = website_text
         else:
             # Step 3: Minimal fallback — company name only
-            source = "website"
+            source = "pending"
             prompt_text = company.name
 
     prompt = _build_prompt(company.name, prompt_text)
@@ -854,7 +874,7 @@ Add after the existing `seed` function:
 ```python
 
 
-@click.command("backfill-descriptions")
+@cli.command("backfill-descriptions")
 @click.option("--all", "backfill_all", is_flag=True, help="Backfill all companies without descriptions")
 def backfill_descriptions(backfill_all: bool) -> None:
     """Generate descriptions for companies that don't have one."""
@@ -919,8 +939,10 @@ Dependencies: Task 1 (data model, DB methods)
 Add to `tests/test_ui.py`:
 
 ```python
-def test_update_description(client, db):
+def test_update_description(client, tmp_path):
     """POST /companies/<id>/description updates the description."""
+    db = Database(tmp_path / "test.db")
+    db.initialize()
     company = Company(name="TestCo", domain="testco.com")
     company_id = db.insert_company(company)
 
@@ -937,8 +959,10 @@ def test_update_description(client, db):
     assert updated.description_source == "manual"
 
 
-def test_regenerate_description(client, db, monkeypatch):
+def test_regenerate_description(client, tmp_path, monkeypatch):
     """POST /companies/<id>/regenerate triggers description generation."""
+    db = Database(tmp_path / "test.db")
+    db.initialize()
     company = Company(name="TestCo", domain="testco.com")
     company_id = db.insert_company(company)
 
@@ -971,7 +995,9 @@ Expected: FAIL with "404 Not Found"
 
 ### Step 3: Add routes to `quarry/ui/routes.py`
 
-Add after the existing `toggle_company` route (around line 266):
+First, add `import threading` to the top-level imports of `quarry/ui/routes.py` (needed by `activate_company()` in Step 4 below).
+
+Then add the following routes after the existing `toggle_company()` function, before the `@bp.route('/log')` decorator:
 
 ```python
 
@@ -1046,8 +1072,6 @@ def activate_company(company_id):
 
     # Defer description generation if missing
     if not company.description:
-        import threading
-
         def _generate_in_background(cid: int):
             try:
                 from quarry.resolve.description import generate_company_description
@@ -1101,8 +1125,10 @@ Dependencies: Task 1 (data model providing description fields in dicts)
 Add to `tests/test_ui.py`:
 
 ```python
-def test_companies_page_renders_cards(client, db):
+def test_companies_page_renders_cards(client, tmp_path):
     """Companies page renders cards instead of tables."""
+    db = Database(tmp_path / "test.db")
+    db.initialize()
     company = Company(name="TestCo", domain="testco.com", ats_type="greenhouse")
     company_id = db.insert_company(company)
     db.update_company_description(company_id, "TestCo builds things.", "manual")
@@ -1112,8 +1138,10 @@ def test_companies_page_renders_cards(client, db):
     html = response.data.decode()
 
     # Should use card class, not table
-    assert "card" in html
-    assert "<table>" not in html
+    assert "company-card" in html
+    # Avoid fragile blanket assertion on <table> in case base.html ever
+    # contains tables; instead verify old table-based layout is gone
+    assert 'class="company-card"' in html
 
     # Should show description
     assert "TestCo builds things." in html

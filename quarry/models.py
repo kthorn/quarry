@@ -40,6 +40,10 @@ class Company(BaseModel):
     ats_slug: str | None = None
     resolve_status: Literal["unresolved", "resolved", "failed"] = "unresolved"
     resolve_attempts: int = 0
+    description: str | None = None
+    description_source: Literal["wikipedia", "website", "manual", "pending"] | None = (
+        None
+    )
     created_at: datetime | None = None
     updated_at: datetime | None = None
 

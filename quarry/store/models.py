@@ -49,6 +49,8 @@ class Company(Base):
         Text, server_default=text("'unresolved'")
     )
     resolve_attempts: Mapped[int] = mapped_column(Integer, server_default=text("0"))
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    description_source: Mapped[Optional[str]] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
@@ -60,6 +62,10 @@ class Company(Base):
         CheckConstraint(
             "resolve_status IN ('unresolved','resolved','failed')",
             name="ck_companies_resolve_status",
+        ),
+        CheckConstraint(
+            "description_source IN ('wikipedia','website','manual','pending')",
+            name="ck_companies_description_source",
         ),
     )
 
