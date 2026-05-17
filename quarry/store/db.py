@@ -904,6 +904,7 @@ class Database:
         offset: int = 0,
         search: str | None = None,
         interest: str | None = None,
+        similarity_threshold: float = 0.0,
     ) -> list[dict]:
         from quarry.store.models import Company as ORMCompany
         from quarry.store.models import JobPosting as ORMPosting
@@ -1040,6 +1041,12 @@ class Database:
                     ORMPosting.title.ilike(f"%{escaped}%", escape="\\"),
                     ORMPosting.description.ilike(f"%{escaped}%", escape="\\"),
                 )
+            )
+
+        # Similarity threshold filter — only active when threshold > 0
+        if similarity_threshold > 0:
+            stmt = stmt.where(
+                func.coalesce(ORMSimScore.similarity_score, 0.0) >= similarity_threshold
             )
 
         # Order by composite_score (ranking pipeline) falling back to similarity
