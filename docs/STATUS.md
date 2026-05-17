@@ -1,6 +1,6 @@
 # STATUS
 
-Last updated: 2026-05-16 (company page overhaul)
+Last updated: 2026-05-17 (docs cleanup — move completed specs to plans/completed, delete stale plans)
 
 ## Phase 1 — MVP Progress
 
@@ -36,31 +36,35 @@ Last updated: 2026-05-16 (company page overhaul)
 - **Bug fix (2026-05-03)**: `session_scope()` now invalidates poisoned connections after rollback, preventing `SingletonThreadPool` from handing the same broken connection to the next session (root cause of cascading "readonly database" crashes). `insert_crawl_run` in `run_once()` wrapped in try/except as defense-in-depth.
 - **Company page overhaul**: card-based UI with LLM-generated descriptions (Wikipedia → website → LLM), inline editing, em-dash cleanup; LLM client module (`quarry/llm.py`); description generation pipeline (`quarry/resolve/description.py`); trigger integrations on seed/scheduler/add-company; backfill-descriptions CLI; plan refined via pi-refine (8 fixes across 2 review iterations)
 
-## Completed Plans
+## Completed Plans & Specs
 
-All refined plans in `docs/plans/completed/`:
+All completed plans and design specs live in `docs/plans/completed/`:
 
-1. `2026-04-05-m1-project-scaffolding.md`
-2. `2026-04-06-m2-crawlers-implementation.md`
-3. `2026-04-07-extraction-pipeline.md`
-4. `2026-04-09-m4-embedding-similarity.md`
-5. `2026-04-10-scheduler-and-digest-minimal.md`
-6. `2026-04-10-seed-data.md`
-7. `2026-04-11-company-resolver.md`
-8. `2026-04-12-location-normalization.md`
-9. `2026-04-11-company-resolver.md`
-10. `2026-04-12-haversine-location-matching-design.md`
-11. `2026-04-12-unified-filter-pipeline.md`
-12. `2026-04-14-m8-labeling-ui.md`
+- `2026-04-05-m1-project-scaffolding.md` — M1: Project scaffolding & database
+- `2026-04-06-m2-crawlers-implementation.md` — M2: Crawlers (JobSpy + ATS)
+- `2026-04-07-extraction-pipeline.md` — M3: Extraction pipeline
+- `2026-04-09-m4-embedding-similarity.md` — M4: Embedding & similarity filter
+- `2026-04-10-scheduler-and-digest-minimal.md` — M6/M7: Scheduler + digest (minimal)
+- `2026-04-10-seed-data.md` — Seed data (29 companies)
+- `2026-04-11-company-cli-design.md` — Company CLI design (add-company)
+- `2026-04-11-company-resolver.md` — Company resolver pipeline
+- `2026-04-12-haversine-location-matching-design.md` — Haversine location matching
+- `2026-04-12-location-normalization.md` — Location normalization
+- `2026-04-12-search-cli-design.md` — Search CLI design
+- `2026-04-12-unified-filter-pipeline.md` — Unified filter pipeline
+- `2026-04-14-company-discovery-design.md` — Company discovery design
+- `2026-04-14-m8-labeling-ui.md` — M8: Labeling UI
+- `2026-05-05-m5-ranking-pipeline-design.md` — M5: Ranking pipeline design
+- `2026-05-08-ui-scores-retrain-search-design.md` — UI: Scores, retrain, search
+- `2026-05-09-oracle-escalation-design.md` — Oracle escalation design
+- `2026-05-09-ui-improvements-design.md` — UI: Interest badges, run scan
+- `2026-05-10-company-page-overhaul-design.md` — Company page overhaul design
 
-**M5 ranking pipeline** (2026-05-05) — design spec at `docs/superpowers/specs/2026-05-05-m5-ranking-pipeline-design.md`
-
-**Multi-user schema** (all 4 phases complete) — see "Multi-User Architecture" table above and design spec at `docs/multi-user-schema.md`
+**Multi-user schema** (all 4 phases complete) — design spec at `docs/multi-user-schema.md`
 
 **Search-discovered companies**: JobSpy-discovered companies created in shared `companies` table with domain/ATS hints from `company_url_direct`/`job_url_direct` URL patterns; linked via inactive `user_watchlist` entries (`active=False, added_reason='search'`); auto-resolved in background with `asyncio.Semaphore`; surfaced in UI "Discovered" section with Activate button
 
 - **NaN bug fix**: JobSpy DataFrame values sanitized via `_safe_str()` before creating companies/postings
-- Plan: `docs/superpowers/plans/2026-04-28-search-discovered-companies.md`
 
 ## Verification
 
