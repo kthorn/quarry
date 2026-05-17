@@ -63,13 +63,17 @@ def test_generate_company_description_wikipedia():
             return_value="OpenAI is an AI lab.",
         ),
         patch(
+            "quarry.resolve.description.fetch_website_text",
+        ) as mock_website,
+    ):
+        with patch(
             "quarry.resolve.description.complete",
             return_value="OpenAI builds large language models.",
-        ),
-    ):
-        desc, source = generate_company_description(company)
-        assert desc == "OpenAI builds large language models."
-        assert source == "wikipedia"
+        ):
+            desc, source = generate_company_description(company)
+            assert desc == "OpenAI builds large language models."
+            assert source == "wikipedia"
+            mock_website.assert_not_called()
 
 
 def test_generate_company_description_fallback():
@@ -88,3 +92,19 @@ def test_generate_company_description_fallback():
         desc, source = generate_company_description(company)
         assert desc == "TinyStartup makes widgets."
         assert source == "website"
+
+
+def test_generate_company_description_both_fail():
+    """When both Wikipedia and website miss, source should be 'pending'."""
+    company = Company(name="GhostCorp", domain="ghostcorp.example")
+    with (
+        patch("quarry.resolve.description.fetch_wikipedia_summary", return_value=None),
+        patch("quarry.resolve.description.fetch_website_text", return_value=None),
+        patch(
+            "quarry.resolve.description.complete",
+            return_value="GhostCorp is unknown.",
+        ),
+    ):
+        desc, source = generate_company_description(company)
+        assert desc == "GhostCorp is unknown."
+        assert source == "pending"
