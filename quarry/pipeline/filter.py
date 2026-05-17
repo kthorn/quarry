@@ -5,6 +5,7 @@ then applies a filter pipeline (keyword blocklist, company, location) to
 reject irrelevant postings before embedding.
 """
 
+import logging
 import re
 
 import numpy as np
@@ -19,6 +20,8 @@ from quarry.config import (
 from quarry.models import FilterDecision, JobPosting, ParseResult, RawPosting
 from quarry.pipeline.embedder import embed_posting
 from quarry.pipeline.locations import haversine_miles
+
+log = logging.getLogger(__name__)
 
 
 def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
@@ -154,8 +157,20 @@ class LocationFilter:
             and not config.accept_regions
         ):
             return FilterDecision(passed=True)
-        if config.accept_remote and posting.work_model in ("remote", None):
+        if config.accept_remote and posting.work_model == "remote":
+            log.debug(
+                "Location filter: pass (remote work_model) for %s at %s",
+                raw.title,
+                company_name,
+            )
             return FilterDecision(passed=True)
+        if config.accept_remote and posting.work_model is None:
+            log.debug(
+                "Location filter: unknown work_model, falling through to geographic check for %s at %s (location=%s)",
+                raw.title,
+                company_name,
+                raw.location,
+            )
         if not parse_result.locations:
             return FilterDecision(passed=True)
         for loc in parse_result.locations:

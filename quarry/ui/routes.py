@@ -353,7 +353,6 @@ def settings():
     similarity = ss.get_similarity_threshold()
     kw_bl = ss.get_keyword_blocklist()
     title_kw = ss.get_title_keywords()
-    company_f = ss.get_company_filter()
     location_f = ss.get_location_filter()
     jobspy = ss.get_jobspy_config()
 
@@ -366,10 +365,6 @@ def settings():
         from quarry.config import TitleKeywordConfig
 
         title_kw = TitleKeywordConfig()
-    if company_f is None:
-        from quarry.config import CompanyFilterConfig
-
-        company_f = CompanyFilterConfig()
     if location_f is None:
         from quarry.config import LocationFilterConfig
 
@@ -388,7 +383,6 @@ def settings():
         similarity=similarity,
         kw_bl=kw_bl,
         title_kw=title_kw,
-        company_f=company_f,
         location_f=location_f,
         jobspy=jobspy,
         known_sites=known_sites,
@@ -494,24 +488,6 @@ def settings_title_keywords():
     ss.set_title_keywords(TitleKeywordConfig(keywords=keywords))
     flash("Title keywords saved.")
     return redirect(url_for("ui.settings", section="title-keywords"))
-
-
-@bp.route("/settings/company-filter", methods=["POST"])
-def settings_company_filter():
-    db = get_db()
-    ss = UserSettingsService(db, user_id=USER_ID)
-
-    allow_text = request.form.get("allow", "")
-    deny_text = request.form.get("deny", "")
-
-    allow = [a.strip() for a in allow_text.split("\n") if a.strip()]
-    deny = [d.strip() for d in deny_text.split("\n") if d.strip()]
-
-    from quarry.config import CompanyFilterConfig
-
-    ss.set_company_filter(CompanyFilterConfig(allow=allow, deny=deny))
-    flash("Company filter saved.")
-    return redirect(url_for("ui.settings", section="company-filter"))
 
 
 @bp.route("/settings/location", methods=["POST"])

@@ -26,6 +26,7 @@ def register(name: str):
         if name in _registry:
             log.warning("Re-registering scorer '%s' (was %s)", name, _registry[name])
         _registry[name] = cls
+        log.debug("Registered scorer '%s' -> %s", name, cls.__name__)
         return cls
 
     return decorator
@@ -39,10 +40,18 @@ def build_step(step_config: StepConfig) -> Any:
     cls = _registry.get(step_config.name)
     if cls is None:
         registered = sorted(_registry.keys())
+        log.error(
+            "build_step failed: no registered class for '%s'. "
+            "Registered names: %s. "
+            "Was quarry.rank.scorers imported before this call?",
+            step_config.name,
+            registered or "(none)",
+        )
         raise ValueError(
             f"Unknown step name '{step_config.name}'. "
             f"Registered: {registered or '(none)'}"
         )
+    log.debug("Building step '%s' -> %s", step_config.name, cls.__name__)
     params = step_config.params
     return cls(**params) if params else cls()
 

@@ -44,8 +44,21 @@ class RankingPipeline:
         """Load the active pipeline config for a user and build all steps."""
         config = db.get_active_pipeline_config(user_id)
         if config is None:
+            log.info("No active pipeline config for user %d; using defaults", user_id)
             config = get_default_config()
+        else:
+            log.info(
+                "Loading pipeline config id=%d for user %d with steps: %s",
+                config.id,
+                user_id,
+                [(s.name, s.enabled) for s in config.steps],
+            )
         steps = [build_step(step) for step in config.steps if step.enabled]
+        log.info(
+            "Built %d ranking steps: %s",
+            len(steps),
+            [type(s).__name__ for s in steps],
+        )
         return cls(steps=steps, config=config, db=db, user_id=user_id)
 
     def _reorder_steps(self, steps: list) -> list:

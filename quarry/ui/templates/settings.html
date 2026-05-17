@@ -9,7 +9,6 @@
       ("similarity", "Similarity"),
       ("blocklist", "Blocklist"),
       ("title-keywords", "Title Keywords"),
-      ("company-filter", "Company Filter"),
       ("location", "Location"),
       ("jobspy", "Job Boards"),
     ] %}
@@ -133,20 +132,6 @@
         <label for="title-keywords-text">Keywords</label>
         <p class="help-text">Required Title Keywords — a posting's title MUST contain at least one of these words or it will be rejected. Leave empty to disable title filtering.</p>
         <textarea name="keywords" id="title-keywords-text" rows="5">{{ "\n".join(title_kw.keywords) if title_kw.keywords else '' }}</textarea>
-        <button type="submit" class="small btn-applied">Save</button>
-      </form>
-
-    {% elif section == "company-filter" %}
-      <h2>Company Filter</h2>
-      <form method="post" action="{{ url_for('ui.settings_company_filter') }}" class="settings-form">
-        <label for="allow">Only allow these companies</label>
-        <p class="help-text">If Allow list is non-empty, ONLY postings from those companies pass.</p>
-        <textarea name="allow" id="allow" rows="5">{{ "\n".join(company_f.allow) if company_f.allow else '' }}</textarea>
-
-        <label for="deny">Deny these companies</label>
-        <p class="help-text">Deny blocks specific companies regardless of allow list. Case-insensitive match.</p>
-        <textarea name="deny" id="deny" rows="5">{{ "\n".join(company_f.deny) if company_f.deny else '' }}</textarea>
-
         <button type="submit" class="small btn-applied">Save</button>
       </form>
 

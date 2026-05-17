@@ -9,6 +9,8 @@ Sources (in order of preference):
 import asyncio
 import logging
 import re
+import threading
+import time
 
 import httpx
 from tenacity import (
@@ -27,11 +29,60 @@ _SUFFIXES = re.compile(
     r"\s+(Inc\.?|Ltd\.?|LLC|Corp\.?|PBC|PLC|GmbH|AG|BV|S\.A\.?)$", re.IGNORECASE
 )
 
+# Patterns that indicate the LLM refused to answer or couldn't produce a summary
+_LLM_REFUSAL = re.compile(
+    r"(?:I don'?t have enough|I (?:cannot|can'?t)\s+(?:provide|answer|summarize"
+    r"|generate|help)|I(?:'m|\s+am)\s+(?:unable|not able)|Could you provide"
+    r"|there (?:is|are) no(?:t enough)?\s+(?:information|details|data|content)"
+    r"|not enough (?:information|context)|no (?:meaningful|useful|relevant)"
+    r"|unable to (?:provide|generate))",
+    re.IGNORECASE,
+)
+
+# Cap concurrent Wikipedia API calls to avoid 429 rate limits.
+# Wikipedia asks for no more than ~200 req/s, but bursts of even 5–10
+# concurrent calls can trigger 429s.  A semaphore of 3 keeps us safe.
+_WIKI_SEMAPHORE = threading.BoundedSemaphore(3)
+
+# Time (seconds) between consecutive Wikipedia API calls.
+# Enforced at the semaphore level: after releasing, we sleep briefly
+# so the next waiter doesn't fire instantly.
+_WIKI_COOLDOWN = 0.3
+
 
 def _sanitize_wikipedia_title(company_name: str) -> str:
     """Strip corporate suffixes and replace spaces with underscores."""
     clean = _SUFFIXES.sub("", company_name).strip()
     return clean.replace(" ", "_")
+
+
+def _fetch_wikipedia_title(title: str) -> str | None:
+    """Fetch Wikipedia summary for a given page title.
+
+    Respects the global semaphore and backoff to avoid 429s.
+    Returns the extract text if it's a real article (not a disambiguation
+    page), None otherwise.
+    """
+    url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{title}"
+
+    _WIKI_SEMAPHORE.acquire()
+    try:
+        time.sleep(_WIKI_COOLDOWN)
+        response = httpx.get(
+            url,
+            timeout=10.0,
+            follow_redirects=True,
+            headers={"User-Agent": "Quarry/0.1"},
+        )
+        response.raise_for_status()
+        data = response.json()
+        if data.get("type") == "disambiguation":
+            log.info("Wikipedia disambiguation page for %s, skipping", title)
+            return None
+        extract = data.get("extract")
+        return extract.strip() if extract else None
+    finally:
+        _WIKI_SEMAPHORE.release()
 
 
 @retry(
@@ -50,23 +101,25 @@ def _sanitize_wikipedia_title(company_name: str) -> str:
 def fetch_wikipedia_summary(company_name: str) -> str | None:
     """Fetch the Wikipedia summary extract for a company.
 
+    Tries the sanitized company name first, then falls back to
+    "<name> (company)" if the bare name is a disambiguation page.
     Returns the extract text if found, None otherwise.
     """
     title = _sanitize_wikipedia_title(company_name)
-    url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{title}"
+
     try:
-        response = httpx.get(
-            url,
-            timeout=10.0,
-            follow_redirects=True,
-            headers={"User-Agent": "Quarry/0.1"},
-        )
-        response.raise_for_status()
-        data = response.json()
-        extract = data.get("extract")
-        if extract:
+        result = _fetch_wikipedia_title(title)
+        if result:
             log.info("Wikipedia hit for %s", company_name)
-            return extract.strip()
+            return result
+
+        # Fallback: try "CompanyName (company)"
+        fallback = f"{title}_(company)"
+        result = _fetch_wikipedia_title(fallback)
+        if result:
+            log.info("Wikipedia hit for %s (via '(company)' fallback)", company_name)
+            return result
+
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
             log.info("Wikipedia miss for %s", company_name)
@@ -189,4 +242,11 @@ def generate_company_description(company: Company) -> tuple[str, str]:
         raise
 
     description = result.strip()[:500]
+
+    # Guard against LLM refusals (e.g. "I don't have enough information…")
+    if _LLM_REFUSAL.search(description):
+        log.warning("LLM refused to summarize %s, using minimal fallback", company.name)
+        description = f"{company.name} is a company."
+        source = "pending"
+
     return description, source

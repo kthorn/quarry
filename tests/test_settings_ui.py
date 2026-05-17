@@ -279,46 +279,6 @@ class TestSettingsTitleKeywords:
         assert tk.keywords == []
 
 
-class TestSettingsCompanyFilter:
-    """POST /settings/company-filter."""
-
-    def test_settings_company_filter(self, client, tmp_path):
-        """POST /settings/company-filter saves allow/deny lists."""
-        response = client.post(
-            "/settings/company-filter",
-            data={
-                "allow": "Google\nMeta",
-                "deny": "Enron\nTheranos",
-            },
-            follow_redirects=True,
-        )
-        assert response.status_code == 200
-        assert b"company filter saved" in response.data.lower()
-
-        db = Database(tmp_path / "test.db")
-        cf = _ss(db).get_company_filter()
-        assert cf is not None
-        assert "Google" in cf.allow
-        assert "Meta" in cf.allow
-        assert "Enron" in cf.deny
-        assert "Theranos" in cf.deny
-
-    def test_settings_empty_company_filter(self, client, tmp_path):
-        """An empty company filter saves with empty allow/deny."""
-        response = client.post(
-            "/settings/company-filter",
-            data={"allow": "", "deny": ""},
-            follow_redirects=True,
-        )
-        assert response.status_code == 200
-
-        db = Database(tmp_path / "test.db")
-        cf = _ss(db).get_company_filter()
-        assert cf is not None
-        assert cf.allow == []
-        assert cf.deny == []
-
-
 class TestSettingsLocation:
     """POST /settings/location."""
 
@@ -467,12 +427,6 @@ class TestSettingsInitiallyNone:
         """get_title_keywords() returns None when no DB override exists."""
         db = init_db(tmp_path / "test.db")
         result = _ss(db).get_title_keywords()
-        assert result is None
-
-    def test_company_filter_initially_none(self, tmp_path):
-        """get_company_filter() returns None when no DB override exists."""
-        db = init_db(tmp_path / "test.db")
-        result = _ss(db).get_company_filter()
         assert result is None
 
     def test_location_filter_initially_none(self, tmp_path):

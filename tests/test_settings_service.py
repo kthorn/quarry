@@ -6,7 +6,6 @@ from unittest.mock import patch
 import pytest
 
 from quarry.config import (
-    CompanyFilterConfig,
     KeywordBlocklistConfig,
     LocationFilterConfig,
     TitleKeywordConfig,
@@ -153,30 +152,6 @@ class TestTitleKeywords:
         result = svc.get_title_keywords()
         assert result is not None
         assert result.keywords == []
-
-
-# ── Company Filter ────────────────────────────────────────────────
-
-
-class TestCompanyFilter:
-    def test_get_returns_none_when_no_db_entry(self, svc):
-        assert svc.get_company_filter() is None
-
-    def test_set_then_get(self, svc):
-        config = CompanyFilterConfig(allow=["Acme"], deny=["EvilCorp"])
-        svc.set_company_filter(config)
-
-        result = svc.get_company_filter()
-        assert result is not None
-        assert result.allow == ["Acme"]
-        assert result.deny == ["EvilCorp"]
-
-    def test_empty_config(self, svc):
-        svc.set_company_filter(CompanyFilterConfig())
-        result = svc.get_company_filter()
-        assert result is not None
-        assert result.allow == []
-        assert result.deny == []
 
 
 # ── Location Filter ───────────────────────────────────────────────
@@ -334,7 +309,6 @@ class TestMultiUser:
         assert svc.get_similarity_threshold() == settings.similarity_threshold
         assert svc.get_keyword_blocklist() is None
         assert svc.get_title_keywords() is None
-        assert svc.get_company_filter() is None
         assert svc.get_location_filter() is None
 
 
@@ -357,13 +331,6 @@ class TestJSONRoundTrip:
         original = TitleKeywordConfig(keywords=["backend", "api"])
         svc.set_title_keywords(original)
         result = svc.get_title_keywords()
-        assert result is not None
-        assert result.model_dump() == original.model_dump()
-
-    def test_company_filter_roundtrip(self, svc):
-        original = CompanyFilterConfig(allow=["GoodCo"], deny=["BadCo"])
-        svc.set_company_filter(original)
-        result = svc.get_company_filter()
         assert result is not None
         assert result.model_dump() == original.model_dump()
 

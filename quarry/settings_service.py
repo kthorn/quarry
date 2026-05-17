@@ -20,7 +20,6 @@ class JobSpyConfigDict(TypedDict):
 
 if TYPE_CHECKING:
     from quarry.config import (
-        CompanyFilterConfig,
         KeywordBlocklistConfig,
         LocationFilterConfig,
         TitleKeywordConfig,
@@ -118,21 +117,6 @@ class UserSettingsService:
         json_str = config.model_dump_json()
         self.db.save_user_setting(self.user_id, "title_keywords", json_str)
         self._cache["title_keywords"] = json_str
-
-    def get_company_filter(self) -> CompanyFilterConfig | None:
-        """Return CompanyFilterConfig from DB, or None (use config.yaml)."""
-        val = self._cache.get("company_filter")
-        if val is None:
-            return None
-        from quarry.config import CompanyFilterConfig
-
-        return CompanyFilterConfig.model_validate(json.loads(val))
-
-    def set_company_filter(self, config: CompanyFilterConfig) -> None:
-        """Serialize to JSON {allow:[], deny:[]}."""
-        json_str = config.model_dump_json()
-        self.db.save_user_setting(self.user_id, "company_filter", json_str)
-        self._cache["company_filter"] = json_str
 
     def get_location_filter(self) -> LocationFilterConfig | None:
         """Deserialize from JSON, then call .normalize_config() to resolve

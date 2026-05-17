@@ -12,7 +12,7 @@ from pathlib import Path
 
 import numpy as np
 
-from quarry.config import FiltersConfig, settings
+from quarry.config import CompanyFilterConfig, FiltersConfig, settings
 from quarry.crawlers import get_crawler
 from quarry.crawlers.base import Crawl404Error
 from quarry.crawlers.jobspy_client import JobSpyClient, JobSpyCompanyHints
@@ -272,7 +272,9 @@ def run_once(db: Database, user_id: int = 1) -> dict:
     if ideal_embedding is not None:
         log.info("Ideal embedding loaded (dim=%d)", len(ideal_embedding))
 
-    # Build filters from user settings (or config.yaml defaults)
+    # Build filters from user settings (or config.yaml defaults).
+    # Company filter is derived from the watchlist: manually deactivated
+    # companies are denied; active and search-discovered companies pass.
 
     kw_bl = ss.get_keyword_blocklist()
     if kw_bl is None:
@@ -280,12 +282,19 @@ def run_once(db: Database, user_id: int = 1) -> dict:
     tk = ss.get_title_keywords()
     if tk is None:
         tk = settings.filters.title_keyword if settings.filters else None
-    cf = ss.get_company_filter()
-    if cf is None:
-        cf = settings.filters.company_filter if settings.filters else None
     lf = ss.get_location_filter()
     if lf is None:
         lf = settings.filters.location_filter if settings.filters else None
+
+    # Derive company deny list from watchlist.
+    # active=False AND added_reason!='search' = user explicitly deactivated.
+    watchlist_entries = db.get_watchlist_companies(user_id=user_id)
+    deny_companies = [
+        w["name"]
+        for w in watchlist_entries
+        if not w["active"] and w.get("added_reason") != "search"
+    ]
+    cf = CompanyFilterConfig(allow=[], deny=deny_companies)
 
     filters_config = FiltersConfig(
         keyword_blocklist=kw_bl,
