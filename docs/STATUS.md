@@ -1,6 +1,6 @@
 # STATUS
 
-Last updated: 2026-05-09 (interest indicators, search persistence, scan button)
+Last updated: 2026-05-16 (company page overhaul)
 
 ## Phase 1 — MVP Progress
 
@@ -34,8 +34,7 @@ Last updated: 2026-05-09 (interest indicators, search persistence, scan button)
 - **Crawl log CSV**: ATS crawler 404 handling, noisy log suppression
 - **RUNBOOK.md**: pre-execution checklist and operational guide
 - **Bug fix (2026-05-03)**: `session_scope()` now invalidates poisoned connections after rollback, preventing `SingletonThreadPool` from handing the same broken connection to the next session (root cause of cascading "readonly database" crashes). `insert_crawl_run` in `run_once()` wrapped in try/except as defense-in-depth.
-- **Bug fix (2026-05-10)**: `insert_pipeline_config()` now reuses an existing config row when the same `(user_id, config_hash)` is inserted again, instead of crashing with `IntegrityError: UNIQUE constraint failed: pipeline_configs.config_hash`. Schema updated so uniqueness is on `(user_id, config_hash)` rather than global `config_hash`.
-- **Enhancement (2026-05-10)**: `upsert_classifier_score()` now writes `model_version_id` so every classifier score is tagged with the training run that produced it. Makes the score cache self-documenting and preserves the option to query historical scores later.
+- **Company page overhaul**: card-based UI with LLM-generated descriptions (Wikipedia → website → LLM), inline editing, em-dash cleanup; LLM client module (`quarry/llm.py`); description generation pipeline (`quarry/resolve/description.py`); trigger integrations on seed/scheduler/add-company; backfill-descriptions CLI; plan refined via pi-refine (8 fixes across 2 review iterations)
 
 ## Completed Plans
 
