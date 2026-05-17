@@ -657,6 +657,40 @@ class Database:
                 for q in result
             ]
 
+    def deactivate_search_query(
+        self, query_id: int, user_id: int = 1, retired_reason: str | None = None
+    ) -> None:
+        from quarry.store.models import UserSearchQuery as ORMSearchQuery
+
+        with session_scope(engine=self.engine) as session:
+            values = {"active": False, "updated_at": func.now()}
+            if retired_reason is not None:
+                values["retired_reason"] = retired_reason
+            stmt = (
+                update(ORMSearchQuery)
+                .where(ORMSearchQuery.id == query_id, ORMSearchQuery.user_id == user_id)
+                .values(**values)
+            )
+            session.execute(stmt)
+
+    def get_all_search_queries(self, user_id: int = 1) -> list[models.UserSearchQuery]:
+        from quarry.store.models import UserSearchQuery as ORMSearchQuery
+
+        with session_scope(engine=self.engine) as session:
+            result = (
+                session.execute(
+                    select(ORMSearchQuery)
+                    .where(ORMSearchQuery.user_id == user_id)
+                    .order_by(ORMSearchQuery.created_at.desc())
+                )
+                .scalars()
+                .all()
+            )
+            return [
+                models.UserSearchQuery.model_validate(q, from_attributes=True)
+                for q in result
+            ]
+
     # ── Agent action methods ───────────────────────────────────
 
     def insert_agent_action(self, action: models.AgentAction) -> int:

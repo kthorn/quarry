@@ -1588,3 +1588,141 @@ class TestInsertPipelineConfig:
         assert pc_id1 != pc_id2
         assert db.get_active_pipeline_config(1).id == pc_id1
         assert db.get_active_pipeline_config(2).id == pc_id2
+
+
+# ── Search query methods ───────────────────────────────────────
+
+
+class TestSearchQueryMethods:
+    """Tests for insert/active/deactivate/get_all search query DB methods."""
+
+    def test_deactivate_search_query(self, db):
+        """Deactivating a search query sets active=False."""
+        q = models.UserSearchQuery(
+            user_id=1, query_text="python developer", active=True
+        )
+        q_id = db.insert_search_query(q)
+
+        db.deactivate_search_query(q_id)
+
+        queries = db.get_active_search_queries()
+        assert len(queries) == 0
+
+    def test_deactivate_search_query_with_retired_reason(self, db):
+        """Deactivating with a retired_reason stores the reason."""
+        q = models.UserSearchQuery(user_id=1, query_text="java developer", active=True)
+        q_id = db.insert_search_query(q)
+
+        db.deactivate_search_query(q_id, retired_reason="no longer needed")
+
+        all_queries = db.get_all_search_queries()
+        deactivated = [qq for qq in all_queries if qq.id == q_id]
+        assert len(deactivated) == 1
+        assert deactivated[0].active is False
+        assert deactivated[0].retired_reason == "no longer needed"
+
+    def test_deactivate_search_query_user_isolation(self, db):
+        """Cannot deactivate another user's search query."""
+        import sqlite3
+
+        conn = sqlite3.connect(str(db.engine.url).replace("sqlite:///", ""))
+        conn.execute(
+            "INSERT INTO users (id, email) VALUES (?, ?)", (2, "user2@example.com")
+        )
+        # Insert directly for user 2
+        conn.execute(
+            "INSERT INTO user_search_queries (user_id, query_text) VALUES (2, 'rust developer')"
+        )
+        q2_id = conn.execute(
+            "SELECT id FROM user_search_queries WHERE user_id=2"
+        ).fetchone()[0]
+        conn.commit()
+        conn.close()
+
+        # Attempt to deactivate from user 1 context — should be a no-op
+        db.deactivate_search_query(q2_id)
+
+        # Query should still be active — open a second connection to check
+        import sqlite3 as sqlite3_mod
+
+        conn2 = sqlite3_mod.connect(str(db.engine.url).replace("sqlite:///", ""))
+        row = conn2.execute(
+            "SELECT active FROM user_search_queries WHERE id=?", (q2_id,)
+        ).fetchone()
+        conn2.close()
+        assert row is not None
+        assert row[0] == 1, "user 2's query should still be active"
+
+        queries = db.get_active_search_queries(user_id=2)
+        assert len(queries) == 1
+        assert queries[0].id == q2_id
+        assert queries[0].active is True
+
+    def test_get_all_search_queries_returns_active_and_retired(self, db):
+        """get_all_search_queries returns both active and inactive queries."""
+        q1 = models.UserSearchQuery(user_id=1, query_text="data scientist", active=True)
+        q2 = models.UserSearchQuery(user_id=1, query_text="ml engineer", active=True)
+        q1_id = db.insert_search_query(q1)
+        q2_id = db.insert_search_query(q2)
+        db.deactivate_search_query(q1_id)
+
+        all_queries = db.get_all_search_queries()
+        ids = {q.id for q in all_queries}
+        assert q1_id in ids
+        assert q2_id in ids
+
+    def test_get_all_search_queries_ordering(self, db):
+        """get_all_search_queries orders by created_at descending."""
+        import sqlite3
+
+        # Insert queries directly with explicit created_at timestamps
+        conn = sqlite3.connect(str(db.engine.url).replace("sqlite:///", ""))
+        conn.execute(
+            "INSERT INTO user_search_queries (user_id, query_text, created_at) "
+            "VALUES (1, 'oldest query', '2024-01-01 00:00:00')"
+        )
+        q1_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        conn.execute(
+            "INSERT INTO user_search_queries (user_id, query_text, created_at) "
+            "VALUES (1, 'middle query', '2024-06-01 00:00:00')"
+        )
+        q2_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        conn.execute(
+            "INSERT INTO user_search_queries (user_id, query_text, created_at) "
+            "VALUES (1, 'newest query', '2024-12-01 00:00:00')"
+        )
+        q3_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        conn.commit()
+        conn.close()
+
+        all_queries = db.get_all_search_queries()
+        ids = [q.id for q in all_queries]
+        # Most recent first: q3 (2024-12), q2 (2024-06), q1 (2024-01)
+        assert ids.index(q3_id) < ids.index(q2_id) < ids.index(q1_id)
+
+    def test_get_all_search_queries_user_isolation(self, db):
+        """get_all_search_queries only returns queries for the specified user."""
+        import sqlite3
+
+        conn = sqlite3.connect(str(db.engine.url).replace("sqlite:///", ""))
+        conn.execute(
+            "INSERT INTO users (id, email) VALUES (?, ?)", (2, "user2@example.com")
+        )
+        conn.execute(
+            "INSERT INTO user_search_queries (user_id, query_text) VALUES (2, 'backend engineer')"
+        )
+        conn.commit()
+        conn.close()
+
+        q = models.UserSearchQuery(
+            user_id=1, query_text="frontend engineer", active=True
+        )
+        db.insert_search_query(q)
+
+        user1_queries = db.get_all_search_queries(user_id=1)
+        user2_queries = db.get_all_search_queries(user_id=2)
+
+        assert len(user1_queries) == 1
+        assert len(user2_queries) == 1
+        assert user1_queries[0].query_text == "frontend engineer"
+        assert user2_queries[0].query_text == "backend engineer"
