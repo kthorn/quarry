@@ -1,101 +1,143 @@
 {% extends "base.html" %}
-{% block title %}Companies — Quarry{% endblock %}
+{% block title %}Companies | Quarry{% endblock %}
 {% block content %}
 <h1>Company Watchlist</h1>
 
 <h2>Active ({{ active|length }})</h2>
 {% if active %}
-<table>
-    <thead>
-        <tr>
-            <th>Name</th>
-            <th>ATS</th>
-            <th>Domain</th>
-            <th>Careers URL</th>
-            <th>Action</th>
-        </tr>
-    </thead>
-    <tbody>
-        {% for company in active %}
-        <tr>
-            <td>{{ company['name'] }}</td>
-            <td>{{ company['ats_type'] }}</td>
-            <td>{{ company['domain'] or "\u2014" }}</td>
-            <td>{% if company['careers_url'] %}<a href="{{ company['careers_url'] }}">{{ company['careers_url'] }}</a>{% else %}\u2014{% endif %}</td>
-            <td>
-                <form method="POST" action="{{ url_for('ui.toggle_company', company_id=company['id']) }}" class="inline">
-                    <button type="submit" class="small btn-negative">Deactivate</button>
-                </form>
-            </td>
-        </tr>
-        {% endfor %}
-    </tbody>
-</table>
+{% for company in active %}
+<div class="card company-card">
+  <div class="card-header">
+    <span class="card-title">
+      {% if company['careers_url'] %}
+      <a href="{{ company['careers_url'] }}" target="_blank">{{ company['name'] }}</a>
+      {% else %}
+      {{ company['name'] }}
+      {% endif %}
+    </span>
+    <span class="badge badge-applied">Active</span>
+  </div>
+  <div class="company-meta">
+    {% if company['domain'] %}<a href="https://{{ company['domain'] }}" target="_blank">{{ company['domain'] }}</a>{% endif %}
+    {% if company['domain'] and company['ats_type'] != 'unknown' %} | {% endif %}
+    {% if company['ats_type'] != 'unknown' %}ATS: {{ company['ats_type']|title }}{% endif %}
+    {% if company['careers_url'] %} |
+    <a href="{{ company['careers_url'] }}" target="_blank">Careers ↗</a>{% endif %}
+  </div>
+  <div class="company-description">
+    {% if company['description'] %}
+    <p>{{ company['description'] }}</p>
+    <div class="description-actions">
+      <form method="POST" action="{{ url_for('ui.update_description', company_id=company['id']) }}" class="inline description-form" style="display:none;">
+        <textarea name="description" rows="3" maxlength="500">{{ company['description'] }}</textarea>
+        <button type="submit" class="small btn-applied">Save</button>
+        <button type="button" class="small btn-archive" onclick="cancelEdit(this)">Cancel</button>
+      </form>
+      <button type="button" class="small btn-archive" onclick="startEdit(this)">Edit</button>
+      <form method="POST" action="{{ url_for('ui.regenerate_description', company_id=company['id']) }}" class="inline">
+        <button type="submit" class="small btn-negative">Regenerate</button>
+      </form>
+    </div>
+    {% else %}
+    <p class="description-missing">
+      {% if company['description_source'] == 'pending' %}
+      Generating description…
+      {% else %}
+      <em>No description yet.</em>
+      {% endif %}
+    </p>
+    <form method="POST" action="{{ url_for('ui.regenerate_description', company_id=company['id']) }}" class="inline">
+      <button type="submit" class="small btn-applied">Generate description</button>
+    </form>
+    {% endif %}
+  </div>
+  <div class="company-actions">
+    <form method="POST" action="{{ url_for('ui.toggle_company', company_id=company['id']) }}" class="inline">
+      <button type="submit" class="small btn-negative">Deactivate</button>
+    </form>
+  </div>
+</div>
+{% endfor %}
 {% else %}
 <p>No active companies.</p>
 {% endif %}
 
 <h2>Inactive ({{ inactive|length }})</h2>
 {% if inactive %}
-<table>
-    <thead>
-        <tr>
-            <th>Name</th>
-            <th>ATS</th>
-            <th>Domain</th>
-            <th>Action</th>
-        </tr>
-    </thead>
-    <tbody>
-        {% for company in inactive %}
-        <tr>
-            <td>{{ company['name'] }}</td>
-            <td>{{ company['ats_type'] }}</td>
-            <td>{{ company['domain'] or "\u2014" }}</td>
-            <td>
-                <form method="POST" action="{{ url_for('ui.toggle_company', company_id=company['id']) }}" class="inline">
-                    <button type="submit" class="small btn-applied">Reactivate</button>
-                </form>
-            </td>
-        </tr>
-        {% endfor %}
-    </tbody>
-</table>
+{% for company in inactive %}
+<div class="card company-card">
+  <div class="card-header">
+    <span class="card-title">{{ company['name'] }}</span>
+    <span class="badge badge-archived">Inactive</span>
+  </div>
+  <div class="company-meta">
+    {% if company['domain'] %}<a href="https://{{ company['domain'] }}" target="_blank">{{ company['domain'] }}</a>{% endif %}
+    {% if company['domain'] and company['ats_type'] != 'unknown' %} | {% endif %}
+    {% if company['ats_type'] != 'unknown' %}ATS: {{ company['ats_type']|title }}{% endif %}
+  </div>
+  <div class="company-description">
+    {% if company['description'] %}
+    <p>{{ company['description'] }}</p>
+    {% else %}
+    <p class="description-missing"><em>No description yet.</em></p>
+    {% endif %}
+  </div>
+  <div class="company-actions">
+    <form method="POST" action="{{ url_for('ui.toggle_company', company_id=company['id']) }}" class="inline">
+      <button type="submit" class="small btn-applied">Reactivate</button>
+    </form>
+  </div>
+</div>
+{% endfor %}
 {% else %}
 <p>No inactive companies.</p>
 {% endif %}
 
 <h2>Discovered via Search ({{ discovered|length }})</h2>
 {% if discovered %}
-<table>
-    <thead>
-        <tr>
-            <th>Name</th>
-            <th>Status</th>
-            <th>Domain</th>
-            <th>Careers URL</th>
-            <th>Action</th>
-        </tr>
-    </thead>
-    <tbody>
-        {% for company in discovered %}
-        <tr>
-            <td>{{ company['name'] }}</td>
-            <td>{{ company['resolve_status'] }}</td>
-            <td>{{ company['domain'] or "\u2014" }}</td>
-            <td>
-                {% if company['careers_url'] %}<a href="{{ company['careers_url'] }}">{{ company['careers_url'] }}</a>{% else %}\u2014{% endif %}
-            </td>
-            <td>
-                <form method="POST" action="{{ url_for('ui.activate_company', company_id=company['id']) }}" class="inline">
-                    <button type="submit" class="small btn-applied">Activate</button>
-                </form>
-            </td>
-        </tr>
-        {% endfor %}
-    </tbody>
-</table>
+{% for company in discovered %}
+<div class="card company-card">
+  <div class="card-header">
+    <span class="card-title">{{ company['name'] }}</span>
+    <span class="badge badge-new">Discovered</span>
+  </div>
+  <div class="company-meta">
+    {% if company['domain'] %}<a href="https://{{ company['domain'] }}" target="_blank">{{ company['domain'] }}</a>{% endif %}
+    {% if company['domain'] and company['careers_url'] %} | {% endif %}
+    {% if company['careers_url'] %}<a href="{{ company['careers_url'] }}" target="_blank">Careers ↗</a>{% endif %}
+  </div>
+  <div class="company-description">
+    {% if company['description'] %}
+    <p>{{ company['description'] }}</p>
+    {% else %}
+    <p class="description-missing"><em>No description yet.</em></p>
+    {% endif %}
+  </div>
+  <div class="company-actions">
+    <form method="POST" action="{{ url_for('ui.activate_company', company_id=company['id']) }}" class="inline">
+      <button type="submit" class="small btn-applied">Activate</button>
+    </form>
+  </div>
+</div>
+{% endfor %}
 {% else %}
 <p>No companies discovered via search yet.</p>
 {% endif %}
+
+<script>
+  function startEdit(button) {
+    var container = button.closest(".company-description");
+    container.querySelector("p").style.display = "none";
+    container.querySelector(".description-form").style.display = "block";
+    button.style.display = "none";
+    container.querySelector('button[type="submit"].btn-negative').style.display = "none";
+  }
+  function cancelEdit(button) {
+    var container = button.closest(".company-description");
+    container.querySelector("p").style.display = "block";
+    container.querySelector(".description-form").style.display = "none";
+    container.querySelector('.description-actions button[onclick="startEdit(this)"]').style.display = "inline-block";
+    container.querySelector('button[type="submit"].btn-negative').style.display = "inline-block";
+  }
+</script>
 {% endblock %}

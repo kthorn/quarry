@@ -895,3 +895,32 @@ class TestCompaniesDiscovered:
         assert "Discovered via Search" in html
         assert "SearchCo" in html
         assert "SeedCo" in html
+
+
+class TestCompaniesPageCards:
+    def test_companies_page_renders_cards(self, app, tmp_path):
+        """Companies page renders cards instead of tables."""
+        db = Database(tmp_path / "test.db")
+        company = Company(name="TestCo", domain="testco.com", ats_type="greenhouse")
+        company_id = db.insert_company(company)
+        db.update_company_description(company_id, "TestCo builds things.", "manual")
+
+        client = app.test_client()
+        response = client.get("/companies")
+        assert response.status_code == 200
+        html = response.data.decode()
+
+        # Should use card class, not table
+        assert "company-card" in html
+        # Verify card-based layout (old table layout replaced)
+        assert '<div class="card company-card">' in html
+
+        # Should show description
+        assert "TestCo builds things." in html
+
+        # Should show edit/regenerate buttons
+        assert "Edit" in html
+        assert "Regenerate" in html
+
+        # Em dash should not appear for missing fields
+        assert "\u2014" not in html

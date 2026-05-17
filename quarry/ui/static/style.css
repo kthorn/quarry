@@ -402,3 +402,61 @@ pre {
 	background: #28a745;
 	color: #fff;
 }
+
+/* Company cards */
+.company-card {
+	margin-bottom: 1rem;
+}
+
+.company-card .card-header {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	margin-bottom: 0.25rem;
+}
+
+.company-meta {
+	font-size: 0.85rem;
+	color: #666;
+	margin-bottom: 0.5rem;
+}
+
+.company-description {
+	font-size: 0.9rem;
+	line-height: 1.5;
+	margin-bottom: 0.5rem;
+}
+
+.company-description p {
+	margin: 0 0 0.5rem 0;
+}
+
+.description-missing {
+	color: #999;
+	font-style: italic;
+}
+
+.description-actions {
+	display: flex;
+	gap: 0.5rem;
+	align-items: flex-start;
+	flex-wrap: wrap;
+}
+
+.description-actions form {
+	margin: 0;
+}
+
+.description-actions textarea {
+	width: 100%;
+	padding: 0.4rem;
+	border: 1px solid #ddd;
+	border-radius: 4px;
+	font-size: 0.9rem;
+	resize: vertical;
+	margin-bottom: 0.25rem;
+}
+
+.company-actions {
+	margin-top: 0.5rem;
+}
