@@ -7,7 +7,6 @@ Per-user methods default to user_id=1 for backward compatibility.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from pathlib import Path
 
 from sqlalchemy import and_, func, or_, select, update
@@ -278,47 +277,12 @@ class Database:
             ]
 
     def get_postings(
-        self, status: str | None = None, limit: int = 100, user_id: int = 1
+        self, limit: int = 100, user_id: int = 1
     ) -> list[models.JobPosting]:
         from quarry.store.models import JobPosting as ORMPosting
-        from quarry.store.models import UserPostingStatus as ORMStatus
 
         with session_scope(engine=self.engine) as session:
-            if status is not None:
-                if status == "new":
-                    stmt = (
-                        select(ORMPosting)
-                        .outerjoin(
-                            ORMStatus,
-                            and_(
-                                ORMPosting.id == ORMStatus.posting_id,
-                                ORMStatus.user_id == user_id,
-                            ),
-                        )
-                        .where(
-                            or_(
-                                ORMStatus.status == "new",
-                                ORMStatus.status.is_(None),
-                            )
-                        )
-                        .limit(limit)
-                    )
-                else:
-                    stmt = (
-                        select(ORMPosting)
-                        .join(
-                            ORMStatus,
-                            and_(
-                                ORMPosting.id == ORMStatus.posting_id,
-                                ORMStatus.user_id == user_id,
-                            ),
-                        )
-                        .where(ORMStatus.status == status)
-                        .limit(limit)
-                    )
-            else:
-                stmt = select(ORMPosting).limit(limit)
-
+            stmt = select(ORMPosting).limit(limit)
             result = session.execute(stmt).scalars().all()
             return [
                 models.JobPosting.model_validate(p, from_attributes=True)
@@ -335,11 +299,10 @@ class Database:
             return models.JobPosting.model_validate(row, from_attributes=True)
 
     def get_postings_for_search(
-        self, status: str | None = None, user_id: int = 1
+        self, user_id: int = 1
     ) -> list[tuple[models.JobPosting, str]]:
         from quarry.store.models import Company as ORMCompany
         from quarry.store.models import JobPosting as ORMPosting
-        from quarry.store.models import UserPostingStatus as ORMStatus
 
         with session_scope(engine=self.engine) as session:
             stmt = (
@@ -347,29 +310,6 @@ class Database:
                 .join(ORMCompany, ORMPosting.company_id == ORMCompany.id)
                 .where(ORMPosting.embedding.isnot(None))
             )
-            if status is not None:
-                if status == "new":
-                    stmt = stmt.outerjoin(
-                        ORMStatus,
-                        and_(
-                            ORMPosting.id == ORMStatus.posting_id,
-                            ORMStatus.user_id == user_id,
-                        ),
-                    ).where(
-                        or_(
-                            ORMStatus.status == "new",
-                            ORMStatus.status.is_(None),
-                        )
-                    )
-                else:
-                    stmt = stmt.join(
-                        ORMStatus,
-                        and_(
-                            ORMPosting.id == ORMStatus.posting_id,
-                            ORMStatus.user_id == user_id,
-                        ),
-                    ).where(ORMStatus.status == status)
-
             result = session.execute(stmt).all()
             out = []
             for posting, company_name in result:
@@ -381,90 +321,7 @@ class Database:
                 )
             return out
 
-    def mark_postings_seen(self, posting_ids: list[int], user_id: int = 1) -> None:
-        if not posting_ids:
-            return
-        from quarry.store.models import UserPostingStatus as ORMStatus
 
-        now = datetime.now(timezone.utc)
-        with session_scope(engine=self.engine) as session:
-            stmt = sqlite_insert(ORMStatus).values(
-                [
-                    dict(
-                        user_id=user_id,
-                        posting_id=pid,
-                        status="seen",
-                        first_seen_at=now,
-                        last_seen_at=now,
-                    )
-                    for pid in posting_ids
-                ]
-            )
-            stmt = stmt.on_conflict_do_update(
-                index_elements=["user_id", "posting_id"],
-                set_=dict(status="seen", last_seen_at=now),
-            )
-            session.execute(stmt)
-
-    def update_posting_status(
-        self, posting_id: int, status: str, user_id: int = 1
-    ) -> None:
-        from quarry.store.models import UserPostingStatus as ORMStatus
-
-        now = datetime.now(timezone.utc)
-        with session_scope(engine=self.engine) as session:
-            session.execute(
-                sqlite_insert(ORMStatus)
-                .values(
-                    user_id=user_id,
-                    posting_id=posting_id,
-                    status=status,
-                    first_seen_at=now,
-                    last_seen_at=now,
-                )
-                .on_conflict_do_update(
-                    index_elements=["user_id", "posting_id"],
-                    set_=dict(status=status, last_seen_at=now),
-                )
-            )
-
-    def count_postings(self, status: str | None = None, user_id: int = 1) -> int:
-        from quarry.store.models import JobPosting as ORMPosting
-        from quarry.store.models import UserPostingStatus as ORMStatus
-
-        with session_scope(engine=self.engine) as session:
-            if status is None:
-                result = session.execute(select(func.count(ORMPosting.id))).scalar()
-            elif status == "new":
-                result = session.execute(
-                    select(func.count(ORMPosting.id))
-                    .outerjoin(
-                        ORMStatus,
-                        and_(
-                            ORMPosting.id == ORMStatus.posting_id,
-                            ORMStatus.user_id == user_id,
-                        ),
-                    )
-                    .where(
-                        or_(
-                            ORMStatus.status == "new",
-                            ORMStatus.status.is_(None),
-                        )
-                    )
-                ).scalar()
-            else:
-                result = session.execute(
-                    select(func.count(ORMPosting.id))
-                    .join(
-                        ORMStatus,
-                        and_(
-                            ORMPosting.id == ORMStatus.posting_id,
-                            ORMStatus.user_id == user_id,
-                        ),
-                    )
-                    .where(ORMStatus.status == status)
-                ).scalar()
-            return result or 0
 
     # ── User Posting State methods ─────────────────────────────
 
@@ -570,128 +427,6 @@ class Database:
                     set_=dict(applied=value, updated_at=func.now()),
                 )
             )
-
-    # ── Label methods ──────────────────────────────────────────
-
-    def insert_label(self, label: models.UserLabel, user_id: int = 1) -> int:
-        from quarry.store.models import UserLabel as ORMLabel
-        from quarry.store.models import UserSetting as ORMUserSetting
-
-        with session_scope(engine=self.engine) as session:
-            actual_user_id = label.user_id if label.user_id is not None else user_id
-
-            # Upsert: insert or update if (user_id, posting_id, signal) already exists
-            stmt = (
-                sqlite_insert(ORMLabel)
-                .values(
-                    user_id=actual_user_id,
-                    posting_id=label.posting_id,
-                    signal=label.signal,
-                    notes=label.notes,
-                    label_source=label.label_source,
-                )
-                .on_conflict_do_update(
-                    index_elements=["user_id", "posting_id", "signal"],
-                    set_=dict(
-                        notes=label.notes,
-                        label_source=label.label_source,
-                        labeled_at=func.now(),
-                    ),
-                )
-            )
-            session.execute(stmt)
-            session.flush()
-
-            # Retrieve the label id — could be newly inserted or from existing row
-            row = session.execute(
-                select(ORMLabel.id).where(
-                    ORMLabel.user_id == actual_user_id,
-                    ORMLabel.posting_id == label.posting_id,
-                    ORMLabel.signal == label.signal,
-                )
-            ).scalar_one()
-            label_id = row
-
-            # Increment labels_since_last_train counter for interest signals
-            if label.signal in ("positive", "negative"):
-                # Read current counter (default "0" if missing)
-                row = session.execute(
-                    select(ORMUserSetting.value).where(
-                        ORMUserSetting.user_id == actual_user_id,
-                        ORMUserSetting.key == "labels_since_last_train",
-                    )
-                ).scalar_one_or_none()
-                current = int(row) if row and row.isdigit() else 0
-                new_count = current + 1
-
-                # Read threshold (default 20)
-                threshold_row = session.execute(
-                    select(ORMUserSetting.value).where(
-                        ORMUserSetting.user_id == actual_user_id,
-                        ORMUserSetting.key == "retrain_label_threshold",
-                    )
-                ).scalar_one_or_none()
-                threshold = (
-                    int(threshold_row)
-                    if threshold_row and threshold_row.isdigit()
-                    else 20
-                )
-
-                # Upsert counter
-                session.execute(
-                    sqlite_insert(ORMUserSetting)
-                    .values(
-                        user_id=actual_user_id,
-                        key="labels_since_last_train",
-                        value=str(new_count),
-                        updated_at=func.now(),
-                    )
-                    .on_conflict_do_update(
-                        index_elements=["user_id", "key"],
-                        set_=dict(value=str(new_count), updated_at=func.now()),
-                    )
-                )
-
-                # Set retrain_pending if threshold reached
-                if new_count >= threshold:
-                    session.execute(
-                        sqlite_insert(ORMUserSetting)
-                        .values(
-                            user_id=actual_user_id,
-                            key="retrain_pending",
-                            value="true",
-                            updated_at=func.now(),
-                        )
-                        .on_conflict_do_update(
-                            index_elements=["user_id", "key"],
-                            set_=dict(value="true", updated_at=func.now()),
-                        )
-                    )
-
-            return label_id
-
-    def get_labels_for_posting(
-        self, posting_id: int, user_id: int = 1
-    ) -> list[models.UserLabel]:
-        from quarry.store.models import UserLabel as ORMLabel
-
-        with session_scope(engine=self.engine) as session:
-            result = (
-                session.execute(
-                    select(ORMLabel)
-                    .where(
-                        ORMLabel.posting_id == posting_id,
-                        ORMLabel.user_id == user_id,
-                    )
-                    .order_by(ORMLabel.labeled_at.desc())
-                )
-                .scalars()
-                .all()
-            )
-            return [
-                models.UserLabel.model_validate(label, from_attributes=True)
-                for label in result
-            ]
 
     # ── Crawl run methods ──────────────────────────────────────
 
@@ -978,21 +713,7 @@ class Database:
         """
         return self.get_user_settings_raw(user_id).get(key)
 
-    def _interest_signal_subquery(self, user_id: int, posting_col):
-        """Return a scalar subquery for the latest positive/negative label."""
-        from quarry.store.models import UserLabel as ORMLabel
 
-        return (
-            select(ORMLabel.signal)
-            .where(
-                ORMLabel.user_id == user_id,
-                ORMLabel.posting_id == posting_col,
-                ORMLabel.signal.in_(["positive", "negative"]),
-            )
-            .order_by(ORMLabel.labeled_at.desc())
-            .limit(1)
-            .scalar_subquery()
-        )
 
     def get_postings_with_scores(
         self,
