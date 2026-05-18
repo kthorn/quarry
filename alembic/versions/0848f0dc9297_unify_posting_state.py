@@ -70,6 +70,10 @@ def downgrade() -> None:
             server_default=sa.text("'user'"),
             nullable=False,
         ),
+        sa.CheckConstraint(
+            "signal IN ('positive','negative','applied','skip')",
+            name="ck_user_labels_signal",
+        ),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(
             ["posting_id"], ["job_postings.id"], ondelete="CASCADE"
@@ -98,6 +102,10 @@ def downgrade() -> None:
             sa.DateTime(),
             server_default=sa.text("(CURRENT_TIMESTAMP)"),
             nullable=False,
+        ),
+        sa.CheckConstraint(
+            "status IN ('new','seen','applied','rejected','archived')",
+            name="ck_posting_status_status",
         ),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(
