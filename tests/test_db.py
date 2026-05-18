@@ -58,8 +58,7 @@ def test_init_creates_all_per_user_tables(tmp_path):
     per_user_tables = [
         "users",
         "user_watchlist",
-        "user_posting_status",
-        "user_labels",
+        "user_posting_state",
         "user_search_queries",
         "user_similarity_scores",
         "user_classifier_scores",
@@ -159,9 +158,8 @@ def test_fk_cascade_postings_to_per_user_tables(tmp_path):
     conn.execute("INSERT OR IGNORE INTO users (id, email) VALUES (1, 'a@b.com')")
 
     # Insert per-user data
-    conn.execute("INSERT INTO user_posting_status (user_id, posting_id) VALUES (1, 1)")
     conn.execute(
-        "INSERT INTO user_labels (user_id, posting_id, signal) VALUES (1, 1, 'positive')"
+        "INSERT INTO user_posting_state (user_id, posting_id, interest) VALUES (1, 1, 1)"
     )
     conn.execute(
         "INSERT INTO user_similarity_scores (user_id, posting_id, similarity_score) VALUES (1, 1, 0.95)"
@@ -179,8 +177,7 @@ def test_fk_cascade_postings_to_per_user_tables(tmp_path):
 
     # Verify cascade
     for table in [
-        "user_posting_status",
-        "user_labels",
+        "user_posting_state",
         "user_similarity_scores",
         "user_classifier_scores",
         "user_enriched_postings",
@@ -208,9 +205,8 @@ def test_fk_cascade_user_to_per_user_tables(tmp_path):
 
     # Insert per-user data in all tables
     conn.execute("INSERT INTO user_watchlist (user_id, company_id) VALUES (1, 1)")
-    conn.execute("INSERT INTO user_posting_status (user_id, posting_id) VALUES (1, 1)")
     conn.execute(
-        "INSERT INTO user_labels (user_id, posting_id, signal) VALUES (1, 1, 'positive')"
+        "INSERT INTO user_posting_state (user_id, posting_id, interest) VALUES (1, 1, 1)"
     )
     conn.execute(
         "INSERT INTO user_search_queries (user_id, query_text) VALUES (1, 'test')"
@@ -235,8 +231,7 @@ def test_fk_cascade_user_to_per_user_tables(tmp_path):
     # Verify cascade
     per_user_tables = [
         "user_watchlist",
-        "user_posting_status",
-        "user_labels",
+        "user_posting_state",
         "user_search_queries",
         "user_similarity_scores",
         "user_classifier_scores",
@@ -518,11 +513,9 @@ def test_per_user_indexes_present(tmp_path):
         "idx_watchlist_user",
         "idx_watchlist_company",
         "idx_watchlist_active",
-        "idx_posting_status_user",
-        "idx_posting_status_posting",
-        "idx_posting_status_status",
-        "idx_labels_user",
-        "idx_labels_posting",
+        "idx_state_user",
+        "idx_state_posting",
+        "idx_state_interest",
         "idx_sim_scores_user",
         "idx_sim_scores_posting",
         "idx_sim_scores_value",
@@ -784,42 +777,6 @@ def test_update_posting_similarities_bulk(db, db_path):
     assert len(rows) == 2
     assert float(rows[0]["similarity_score"]) == pytest.approx(0.5)
     assert float(rows[1]["similarity_score"]) == pytest.approx(0.8)
-
-
-def test_mark_postings_seen(db, db_path):
-    cid = db.insert_company(models.Company(name="Acme"))
-    posting = models.JobPosting(
-        company_id=cid, title="E", title_hash="h", url="http://x.com"
-    )
-    pid = db.insert_posting(posting)
-
-    db.mark_postings_seen([pid])
-
-    conn = _raw(db_path)
-    row = conn.execute(
-        "SELECT status FROM user_posting_status WHERE user_id = 1 AND posting_id = ?",
-        (pid,),
-    ).fetchone()
-    conn.close()
-    assert row["status"] == "seen"
-
-
-def test_count_postings(db):
-    cid = db.insert_company(models.Company(name="Acme"))
-    db.insert_posting(
-        models.JobPosting(
-            company_id=cid, title="A", title_hash="a", url="http://x.com/a"
-        )
-    )
-    db.insert_posting(
-        models.JobPosting(
-            company_id=cid, title="B", title_hash="b", url="http://x.com/b"
-        )
-    )
-
-    assert db.count_postings() == 2
-    assert db.count_postings(status="new") == 2
-    assert db.count_postings(status="seen") == 0
 
 
 def test_get_postings_with_scores(db):
@@ -1600,11 +1557,18 @@ class TestGetPostingsWithScoresNew:
         company = models.Company(name="FilterCo")
         cid = db.insert_company(company)
         pid1 = db.insert_posting(
-            models.JobPosting(company_id=cid, title="Good Job", title_hash="f1",
-                              url="https://x.com/f1"))
+            models.JobPosting(
+                company_id=cid,
+                title="Good Job",
+                title_hash="f1",
+                url="https://x.com/f1",
+            )
+        )
         pid2 = db.insert_posting(
-            models.JobPosting(company_id=cid, title="Bad Job", title_hash="f2",
-                              url="https://x.com/f2"))
+            models.JobPosting(
+                company_id=cid, title="Bad Job", title_hash="f2", url="https://x.com/f2"
+            )
+        )
 
         db.set_interest(pid1, True)
         db.set_interest(pid2, False)
@@ -1618,11 +1582,18 @@ class TestGetPostingsWithScoresNew:
         company = models.Company(name="FilterCo2")
         cid = db.insert_company(company)
         pid1 = db.insert_posting(
-            models.JobPosting(company_id=cid, title="Tagged", title_hash="f3",
-                              url="https://x.com/f3"))
+            models.JobPosting(
+                company_id=cid, title="Tagged", title_hash="f3", url="https://x.com/f3"
+            )
+        )
         db.insert_posting(
-            models.JobPosting(company_id=cid, title="Untagged", title_hash="f4",
-                              url="https://x.com/f4"))
+            models.JobPosting(
+                company_id=cid,
+                title="Untagged",
+                title_hash="f4",
+                url="https://x.com/f4",
+            )
+        )
 
         db.set_interest(pid1, True)
 
