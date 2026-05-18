@@ -1009,8 +1009,7 @@ class Database:
         from quarry.store.models import PipelineConfig as ORMPipelineConfig
         from quarry.store.models import UserClassifierScore as ORMClsScore
         from quarry.store.models import UserEnrichedPosting as ORMEnriched
-        from quarry.store.models import UserLabel as ORMLabel
-        from quarry.store.models import UserPostingStatus as ORMStatus
+        from quarry.store.models import UserPostingState as ORMState
         from quarry.store.models import UserRankingScore as ORMRankScore
         from quarry.store.models import UserSimilarityScore as ORMSimScore
 
@@ -1039,7 +1038,8 @@ class Database:
                 ORMPosting.source_id,
                 ORMPosting.source_type,
                 ORMCompany.name.label("company_name"),
-                func.coalesce(ORMStatus.status, "new").label("status"),
+                ORMState.interest,
+                ORMState.applied,
                 func.coalesce(ORMSimScore.similarity_score, 0.0).label(
                     "similarity_score"
                 ),
@@ -1052,17 +1052,13 @@ class Database:
                 func.coalesce(ORMRankScore.composite_score, 0.0).label(
                     "composite_score"
                 ),
-                # Scalar subquery: latest positive/negative interest signal per posting
-                self._interest_signal_subquery(user_id, ORMPosting.id).label(
-                    "interest_signal"
-                ),
             )
             .join(ORMCompany, ORMPosting.company_id == ORMCompany.id)
             .outerjoin(
-                ORMStatus,
+                ORMState,
                 and_(
-                    ORMPosting.id == ORMStatus.posting_id,
-                    ORMStatus.user_id == user_id,
+                    ORMPosting.id == ORMState.posting_id,
+                    ORMState.user_id == user_id,
                 ),
             )
             .outerjoin(
@@ -1088,8 +1084,7 @@ class Database:
             )
         )
 
-        # Always LEFT JOIN ranking scores — when there's no active config,
-        # the condition matches no rows and all ORMRankScore columns stay NULL
+        # Always LEFT JOIN ranking scores
         stmt = stmt.outerjoin(
             ORMRankScore,
             and_(
@@ -1099,34 +1094,14 @@ class Database:
             ),
         )
 
-        if status == "new":
-            stmt = stmt.where(
-                or_(
-                    ORMStatus.status == "new",
-                    ORMStatus.status.is_(None),
-                )
-            )
-        else:
-            stmt = stmt.where(ORMStatus.status == status)
-
         # Interest filter
         if interest == "interested":
-            stmt = stmt.where(
-                self._interest_signal_subquery(user_id, ORMPosting.id) == "positive"
-            )
+            stmt = stmt.where(ORMState.interest.is_(True))
         elif interest == "not_interested":
-            stmt = stmt.where(
-                self._interest_signal_subquery(user_id, ORMPosting.id) == "negative"
-            )
+            stmt = stmt.where(ORMState.interest.is_(False))
         elif interest == "untagged":
-            from sqlalchemy import exists
-
             stmt = stmt.where(
-                ~exists().where(
-                    ORMLabel.user_id == user_id,
-                    ORMLabel.posting_id == ORMPosting.id,
-                    ORMLabel.signal.in_(["positive", "negative"]),
-                )
+                or_(ORMState.interest.is_(None), ORMState.user_id.is_(None))
             )
 
         # Keyword search filter
@@ -1141,13 +1116,13 @@ class Database:
                 )
             )
 
-        # Similarity threshold filter — only active when threshold > 0
+        # Similarity threshold filter
         if similarity_threshold > 0:
             stmt = stmt.where(
                 func.coalesce(ORMSimScore.similarity_score, 0.0) >= similarity_threshold
             )
 
-        # Order by composite_score (ranking pipeline) falling back to similarity
+        # Order by composite_score falling back to similarity
         stmt = (
             stmt.order_by(
                 func.coalesce(
@@ -1170,10 +1145,10 @@ class Database:
         status: str | None = None,
         interest: str | None = None,
     ) -> int:
-        """Count postings from user's watchlist, optionally filtered by status."""
+        """Count postings from user's watchlist, optionally filtered by interest."""
         from quarry.store.models import Company as ORMCompany
         from quarry.store.models import JobPosting as ORMPosting
-        from quarry.store.models import UserPostingStatus as ORMStatus
+        from quarry.store.models import UserPostingState as ORMState
         from quarry.store.models import UserWatchlistItem as ORMWatchlist
 
         stmt = (
@@ -1189,54 +1164,39 @@ class Database:
             )
         )
 
-        if status is not None:
-            if status == "new":
-                stmt = stmt.outerjoin(
-                    ORMStatus,
-                    and_(
-                        ORMPosting.id == ORMStatus.posting_id,
-                        ORMStatus.user_id == user_id,
-                    ),
-                ).where(
-                    or_(
-                        ORMStatus.status == "new",
-                        ORMStatus.status.is_(None),
-                    )
-                )
-            else:
-                stmt = stmt.join(
-                    ORMStatus,
-                    and_(
-                        ORMPosting.id == ORMStatus.posting_id,
-                        ORMStatus.user_id == user_id,
-                    ),
-                ).where(ORMStatus.status == status)
-
         # Interest filter
         if interest == "interested":
-            stmt = stmt.where(
-                self._interest_signal_subquery(user_id, ORMPosting.id) == "positive"
-            )
+            stmt = stmt.join(
+                ORMState,
+                and_(
+                    ORMPosting.id == ORMState.posting_id,
+                    ORMState.user_id == user_id,
+                ),
+            ).where(ORMState.interest.is_(True))
         elif interest == "not_interested":
-            stmt = stmt.where(
-                self._interest_signal_subquery(user_id, ORMPosting.id) == "negative"
-            )
+            stmt = stmt.join(
+                ORMState,
+                and_(
+                    ORMPosting.id == ORMState.posting_id,
+                    ORMState.user_id == user_id,
+                ),
+            ).where(ORMState.interest.is_(False))
         elif interest == "untagged":
-            from sqlalchemy import exists
-
-            from quarry.store.models import UserLabel as ORMLabel
-
-            stmt = stmt.where(
-                ~exists().where(
-                    ORMLabel.user_id == user_id,
-                    ORMLabel.posting_id == ORMPosting.id,
-                    ORMLabel.signal.in_(["positive", "negative"]),
+            stmt = stmt.outerjoin(
+                ORMState,
+                and_(
+                    ORMPosting.id == ORMState.posting_id,
+                    ORMState.user_id == user_id,
+                ),
+            ).where(
+                or_(
+                    ORMState.interest.is_(None),
+                    ORMState.user_id.is_(None),
                 )
             )
 
         with session_scope(engine=self.engine) as session:
-            result = session.execute(stmt).scalar()
-            return result or 0
+            return session.execute(stmt).scalar_one()
 
     # ── Watchlist methods ───────────────────────────────────────
 
