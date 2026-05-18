@@ -102,24 +102,35 @@ def fetch_wikipedia_summary(company_name: str) -> str | None:
     """Fetch the Wikipedia summary extract for a company.
 
     Tries the sanitized company name first, then falls back to
-    "<name> (company)" if the bare name is a disambiguation page.
-    Returns the extract text if found, None otherwise.
+    "<name> (company)" if the bare name is missing (HTTP 404) or is a
+    disambiguation page.  Returns the extract text if found, None
+    otherwise.
     """
     title = _sanitize_wikipedia_title(company_name)
 
+    # Try bare title first.  Both "page not found" (HTTP 404) and
+    # disambiguation pages (returned as None by _fetch_wikipedia_title)
+    # should fall through to the "(company)" suffix fallback.
     try:
         result = _fetch_wikipedia_title(title)
         if result:
             log.info("Wikipedia hit for %s", company_name)
             return result
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code != 404:
+            raise
+        log.info(
+            "Wikipedia bare title 404 for %s, trying '(company)' fallback",
+            company_name,
+        )
 
-        # Fallback: try "CompanyName (company)"
-        fallback = f"{title}_(company)"
+    # Fallback: try "CompanyName (company)"
+    fallback = f"{title}_(company)"
+    try:
         result = _fetch_wikipedia_title(fallback)
         if result:
             log.info("Wikipedia hit for %s (via '(company)' fallback)", company_name)
             return result
-
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
             log.info("Wikipedia miss for %s", company_name)

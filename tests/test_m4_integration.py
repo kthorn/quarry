@@ -1,5 +1,7 @@
 """Integration tests for the full M4 pipeline: extract -> filter -> embed -> store."""
 
+from unittest.mock import MagicMock, patch
+
 import numpy as np
 import pytest
 
@@ -17,6 +19,24 @@ from quarry.pipeline.filter import (
     embed_and_score,
 )
 from quarry.store.db import init_db
+
+EMBEDDING_DIM = 384
+
+
+@pytest.fixture(autouse=True)
+def _mock_embedding_model():
+    """Prevent tests from loading the real sentence-transformers model.
+
+    Uses a deterministic normalized vector so similarity tests are stable.
+    """
+    with patch("quarry.pipeline.embedder._get_model") as mock_get_model:
+        mock_model = MagicMock()
+        mock_model.get_embedding_dimension.return_value = EMBEDDING_DIM
+        # Deterministic: all-ones normalized so cos-sim with itself is 1.0
+        _fixed_emb = np.ones(EMBEDDING_DIM, dtype=np.float32) / np.sqrt(EMBEDDING_DIM)
+        mock_model.encode.return_value = _fixed_emb
+        mock_get_model.return_value = mock_model
+        yield
 
 
 @pytest.fixture

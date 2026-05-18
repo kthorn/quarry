@@ -301,6 +301,11 @@ def toggle_company(company_id):
     if item is None:
         return "Company not in watchlist", 404
     item.active = not item.active
+    # When a user explicitly deactivates a search-discovered company,
+    # change added_reason so the scheduler deny list treats it as
+    # user-rejected rather than never-reviewed.
+    if not item.active and item.added_reason == "search":
+        item.added_reason = "deactivated"
     db.upsert_watchlist_item(item)
     return redirect(url_for("ui.companies"))
 

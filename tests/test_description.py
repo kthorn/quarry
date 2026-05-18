@@ -114,6 +114,32 @@ def test_fetch_wikipedia_summary_disambiguation_no_fallback():
         assert result is None
 
 
+def test_fetch_wikipedia_summary_bare_404_fallback_succeeds():
+    """Bare name 404s → fallback to (company) which succeeds.
+
+    This is the bugfix scenario: previously a 404 on the bare title
+    was caught by the outer except and returned None immediately,
+    never reaching the "(company)" fallback.
+    """
+    import httpx
+
+    bare_404 = MagicMock()
+    bare_404.raise_for_status.side_effect = httpx.HTTPStatusError(
+        "404 Not Found", request=MagicMock(), response=MagicMock(status_code=404)
+    )
+    fallback_article = MagicMock()
+    fallback_article.status_code = 200
+    fallback_article.json.return_value = {
+        "extract": "Stripe is a payment processing company.",
+    }
+    with patch(
+        "quarry.resolve.description.httpx.get",
+        side_effect=[bare_404, fallback_article],
+    ):
+        result = fetch_wikipedia_summary("Stripe")
+        assert result == "Stripe is a payment processing company."
+
+
 def test_generate_company_description_wikipedia():
     company = Company(name="OpenAI", domain="openai.com")
     with (

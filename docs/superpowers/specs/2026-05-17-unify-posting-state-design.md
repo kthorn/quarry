@@ -7,12 +7,12 @@
 
 `user_labels` and `user_posting_status` are two overlapping tables that duplicate concepts:
 
-| Concept | `user_labels.signal` | `user_posting_status.status` |
-|---------|---------------------|------------------------------|
-| Applied | `applied` | `applied` |
-| Rejected | `negative` (derived) | `rejected` |
-| Seen | `negative` (derived) | `seen` |
-| Archived | `skip` (derived) | `archived` |
+| Concept  | `user_labels.signal` | `user_posting_status.status` |
+| -------- | -------------------- | ---------------------------- |
+| Applied  | `applied`            | `applied`                    |
+| Rejected | `negative` (derived) | `rejected`                   |
+| Seen     | `negative` (derived) | `seen`                       |
+| Archived | `skip` (derived)     | `archived`                   |
 
 `user_labels` has `UNIQUE(user_id, posting_id, signal)`, so `positive` and `negative` can coexist for the same posting. The application resolves ambiguity via a "latest `labeled_at` wins" subquery, which is fragile and opaque.
 
@@ -62,6 +62,7 @@ CREATE INDEX idx_state_interest ON user_posting_state(user_id, interest);
 ### Database Layer (`quarry/store/db.py`)
 
 **Removed methods:**
+
 - `insert_label`
 - `get_labels_for_posting`
 - `update_posting_status`
@@ -69,23 +70,23 @@ CREATE INDEX idx_state_interest ON user_posting_state(user_id, interest);
 
 **New / changed methods:**
 
-| Method | Behavior |
-|--------|----------|
-| `set_interest(user_id, posting_id, value: bool \| None)` | Upsert `interest`, set `labeled_at = now()`, increment `labels_since_last_train`, set `retrain_pending` when threshold reached |
-| `set_applied(user_id, posting_id, value: bool)` | Upsert `applied`, set `updated_at = now()` |
-| `get_postings_with_scores(...)` | Replace `_interest_signal_subquery` with direct column read. Interest filter: `interest` → `interest = TRUE`, `not_interested` → `interest = FALSE`, `untagged` → `interest IS NULL` |
-| `get_labeled_embeddings(user_id)` | Change from `signal IN ('positive','negative')` to `interest IS NOT NULL`. Return `(interest_bool, embedding, posting_id)` instead of `(signal_str, ...)`. |
-| `count_postings_by_watchlist(...)` | Remove status-based counting. Replace with interest + applied counts. |
+| Method                                                   | Behavior                                                                                                                                                                             |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `set_interest(user_id, posting_id, value: bool \| None)` | Upsert `interest`, set `labeled_at = now()`, increment `labels_since_last_train`, set `retrain_pending` when threshold reached                                                       |
+| `set_applied(user_id, posting_id, value: bool)`          | Upsert `applied`, set `updated_at = now()`                                                                                                                                           |
+| `get_postings_with_scores(...)`                          | Replace `_interest_signal_subquery` with direct column read. Interest filter: `interest` → `interest = TRUE`, `not_interested` → `interest = FALSE`, `untagged` → `interest IS NULL` |
+| `get_labeled_embeddings(user_id)`                        | Change from `signal IN ('positive','negative')` to `interest IS NOT NULL`. Return `(interest_bool, embedding, posting_id)` instead of `(signal_str, ...)`.                           |
+| `count_postings_by_watchlist(...)`                       | Remove status-based counting. Replace with interest + applied counts.                                                                                                                |
 
 ### Interest Signal Concepts
 
-| Old | New |
-|-----|-----|
-| signal = `'positive'` | `interest = TRUE` |
+| Old                   | New                |
+| --------------------- | ------------------ |
+| signal = `'positive'` | `interest = TRUE`  |
 | signal = `'negative'` | `interest = FALSE` |
-| No signal | `interest IS NULL` |
-| signal = `'applied'` | `applied = TRUE` |
-| signal = `'skip'` | Removed |
+| No signal             | `interest IS NULL` |
+| signal = `'applied'`  | `applied = TRUE`   |
+| signal = `'skip'`     | Removed            |
 
 ### Classifier Training (`quarry/rank/train.py`, `quarry/rank/scorers/classifier.py`)
 
@@ -96,6 +97,7 @@ CREATE INDEX idx_state_interest ON user_posting_state(user_id, interest);
 ### UI Changes (`quarry/ui/routes.py`, `quarry/ui/templates/postings.html`)
 
 **Route `/label/<posting_id>` (POST):**
+
 - Accept `interest` form field: `"positive"`, `"negative"`, or absent
 - Accept `applied` form field: `"true"` or absent
 - Call `set_interest()` and/or `set_applied()` accordingly
@@ -103,6 +105,7 @@ CREATE INDEX idx_state_interest ON user_posting_state(user_id, interest);
 - Remove `VALID_STATUSES` and status tabs
 
 **Template changes:**
+
 - Remove status tabs (New, Seen, Applied, Rejected, Archived)
 - Interest filter remains: All, Interested, Not Interested, Untagged
 - Interest badges remain (map `interest=True` → "Interested", `interest=False` → "Not Interested")
@@ -111,6 +114,7 @@ CREATE INDEX idx_state_interest ON user_posting_state(user_id, interest);
 - Remove Archive button
 
 **Interest filter values:**
+
 - `"interested"` → `interest = TRUE`
 - `"not_interested"` → `interest = FALSE`
 - `"untagged"` → `interest IS NULL`

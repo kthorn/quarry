@@ -1,6 +1,6 @@
 # STATUS
 
-Last updated: 2026-05-17 (removed redundant Company Filter settings section; watchlist is now single source of truth for company filtering)
+Last updated: 2026-05-17 (hermetic test fixes: settings UI, scheduler, and M4 integration tests no longer load real sentence-transformers model)
 
 ## Phase 1 — MVP Progress
 
@@ -37,6 +37,7 @@ Last updated: 2026-05-17 (removed redundant Company Filter settings section; wat
 - **Company page overhaul**: card-based UI with LLM-generated descriptions (Wikipedia → website → LLM), inline editing, em-dash cleanup; LLM client module (`quarry/llm.py`); description generation pipeline (`quarry/resolve/description.py`); trigger integrations on seed/scheduler/add-company; backfill-descriptions CLI; plan refined via pi-refine (8 fixes across 2 review iterations)
 - **Settings UI**: (`feature/settings-ui` branch) unified settings page with sidebar layout (7 sections), `UserSettingsService` with config.yaml fallback, search query management (add/retire), all filter configs editable from web UI, JobSpy settings, scheduler integration via service; design spec refined via pi-refine (3 iterations, 2 models); 557 tests passing
 - **Company filter simplification** (2026-05-17): removed redundant Company Filter section from Settings UI; company allow/deny is now derived from the watchlist (Active = allow, manually deactivated = deny, search-discovered = allow); `CompanyFilterConfig` still used internally by the pipeline but populated from watchlist state instead of user-editable text fields
+- **Hermetic test fixes** (2026-05-17): `test_settings_ui.py`, `test_scheduler.py`, and `test_m4_integration.py` now mock `quarry.pipeline.embedder._get_model` via module-level `autouse` fixtures, preventing real `SentenceTransformer` model loads. Settings UI role-description test dropped from 11s → 0.8s. `test_pipeline_embedder.py` (which intentionally tests the real embedder) skips gracefully when the model is unavailable. Structural fix tracked in [#4](https://github.com/kthorn/quarry/issues/4) (decouple settings writes from embedding computation + injectable `EmbeddingProvider`)
 
 ## Completed Plans & Specs
 
@@ -81,7 +82,7 @@ All completed plans and design specs live in `docs/plans/completed/`:
 - `python -m pytest tests/test_orm.py -v` — **17 ORM tests passing** (Phase 2)
 - `ruff check .` — clean
 - `pyright quarry/` — clean
-- `python -m pytest tests/ -q` — **471 passed, 22 skipped** (0 failures)
+- `python -m pytest tests/ -q` — **555 passed, 22 skipped** (0 failures)
 - **Note:** All four phases complete. All callers use per-user ORM methods with `user_id=1`. `get_recent_postings`/`get_postings_paginated`/`db.execute()` removed. Backward-compat aliases removed from `models.py`.
 - **Ranking pipeline:** `python -m quarry.rank list-scorers` — shows 5 registered scorers
 - **Ranking CLI:** `python -m quarry.rank config get|set`, `python -m quarry.rank train`, `python -m quarry.rank evaluate`, `python -m quarry.rank recompute`

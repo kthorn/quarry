@@ -4,6 +4,9 @@ Tests the 13 settings-related POST routes and the GET /settings page
 using the Flask test client pattern from tests/test_ui.py.
 """
 
+from unittest.mock import MagicMock, patch
+
+import numpy as np
 import pytest
 
 from quarry.models import UserSearchQuery
@@ -12,6 +15,24 @@ from quarry.store.db import Database, init_db
 from quarry.ui.app import create_app
 
 USER_ID = 1
+EMBEDDING_DIM = 384
+
+
+@pytest.fixture(autouse=True)
+def _mock_embedding_model():
+    """Prevent tests from loading the real sentence-transformers model.
+
+    Settings UI tests are integration tests for HTTP routes and DB persistence.
+    They should not depend on a cached model or network access to HuggingFace.
+    """
+    with patch("quarry.pipeline.embedder._get_model") as mock_get_model:
+        mock_model = MagicMock()
+        mock_model.get_embedding_dimension.return_value = EMBEDDING_DIM
+        mock_model.encode.return_value = np.random.rand(EMBEDDING_DIM).astype(
+            np.float32
+        )
+        mock_get_model.return_value = mock_model
+        yield
 
 
 @pytest.fixture

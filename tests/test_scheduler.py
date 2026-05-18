@@ -1,4 +1,4 @@
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
@@ -17,6 +17,31 @@ from quarry.crawlers.jobspy_client import JobSpyCompanyHints
 from quarry.models import Company, RawPosting, UserWatchlistItem
 from quarry.pipeline.embedder import set_ideal_embedding
 from quarry.store.db import init_db
+
+EMBEDDING_DIM = 384
+
+
+@pytest.fixture(autouse=True)
+def _mock_embedding_model():
+    """Prevent tests from loading the real sentence-transformers model.
+
+    Scheduler pipeline tests use crawler mocks and should not depend on
+    a cached model or network access to HuggingFace.  Random embeddings
+    are sufficient for testing filter/dedup/store logic.
+    """
+    with patch("quarry.pipeline.embedder._get_model") as mock_get_model:
+        mock_model = MagicMock()
+        mock_model.get_embedding_dimension.return_value = EMBEDDING_DIM
+
+        def _fake_encode(text, normalize_embeddings=True, show_progress_bar=False):
+            emb = np.random.rand(EMBEDDING_DIM).astype(np.float32)
+            if normalize_embeddings:
+                emb = emb / (np.linalg.norm(emb) + 1e-9)
+            return emb
+
+        mock_model.encode.side_effect = _fake_encode
+        mock_get_model.return_value = mock_model
+        yield
 
 
 @pytest.fixture
