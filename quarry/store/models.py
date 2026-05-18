@@ -127,6 +127,9 @@ class JobPosting(Base):
     ranking_scores: Mapped[list["UserRankingScore"]] = relationship(
         back_populates="posting", cascade="all, delete-orphan"
     )
+    posting_states: Mapped[list["UserPostingState"]] = relationship(
+        back_populates="posting", cascade="all, delete-orphan"
+    )
 
 
 class Location(Base):
@@ -290,6 +293,9 @@ class User(Base):
         back_populates="user", cascade="all, delete-orphan"
     )
     ranking_scores: Mapped[list["UserRankingScore"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+    posting_states: Mapped[list["UserPostingState"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
 
@@ -494,8 +500,8 @@ class UserPostingState(Base):
     )
 
     # Relationships
-    user: Mapped["User"] = relationship(backref="posting_states")
-    posting: Mapped["JobPosting"] = relationship(backref="posting_states")
+    user: Mapped["User"] = relationship(back_populates="posting_states")
+    posting: Mapped["JobPosting"] = relationship(back_populates="posting_states")
 
 
 class PipelineConfig(Base):
