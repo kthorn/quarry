@@ -52,14 +52,14 @@ def run_migrations_online() -> None:
     connectable = create_engine(get_url(), poolclass=pool.NullPool)
 
     with connectable.connect() as connection:
-        # Enforce foreign keys during migration operations
-        connection.execute(text("PRAGMA foreign_keys = ON"))
-
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
         )
         with context.begin_transaction():
+            # Enforce foreign keys during migration operations (inside the
+            # migration transaction so it doesn't trigger a separate autobegin)
+            connection.execute(text("PRAGMA foreign_keys = ON"))
             context.run_migrations()
 
 
