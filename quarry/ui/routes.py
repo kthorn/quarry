@@ -12,7 +12,7 @@ from flask import (
     url_for,
 )
 
-from quarry.models import UserLabel, UserWatchlistItem
+from quarry.models import UserWatchlistItem
 from quarry.settings_service import UserSettingsService
 from quarry.store.db import Database
 

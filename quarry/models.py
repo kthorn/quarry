@@ -102,25 +102,6 @@ class UserWatchlistItem(BaseModel):
     updated_at: datetime | None = None
 
 
-class UserPostingStatus(BaseModel):
-    id: int | None = None
-    user_id: int
-    posting_id: int
-    status: Literal["new", "seen", "applied", "rejected", "archived"] = "new"
-    first_seen_at: datetime | None = None
-    last_seen_at: datetime | None = None
-
-
-class UserLabel(BaseModel):
-    id: int | None = None
-    user_id: int
-    posting_id: int
-    signal: Literal["positive", "negative", "applied", "skip"]
-    notes: str | None = None
-    labeled_at: datetime | None = None
-    label_source: Literal["user", "inferred"] = "user"
-
-
 class UserSearchQuery(BaseModel):
     id: int | None = None
     user_id: int
