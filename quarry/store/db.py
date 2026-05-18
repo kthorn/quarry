@@ -5,6 +5,8 @@ No raw sqlite3 — execute(), executemany(), and get_connection() are removed.
 Per-user methods default to user_id=1 for backward compatibility.
 """
 
+from __future__ import annotations
+
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -165,9 +167,8 @@ class Database:
     # ── Posting methods ────────────────────────────────────────
 
     def insert_posting(self, posting: models.JobPosting, user_id: int = 1) -> int:
-        """Insert a posting into the shared catalog and create user_posting_status."""
+        """Insert a posting into the shared catalog."""
         from quarry.store.models import JobPosting as ORMPosting
-        from quarry.store.models import UserPostingStatus as ORMStatus
 
         with session_scope(engine=self.engine) as session:
             orm_p = ORMPosting(
@@ -185,14 +186,6 @@ class Database:
             )
             session.add(orm_p)
             session.flush()
-
-            session.add(
-                ORMStatus(
-                    user_id=user_id,
-                    posting_id=orm_p.id,
-                    status="new",
-                )
-            )
             return orm_p.id
 
     def posting_exists(self, company_id: int, title_hash: str) -> bool:
@@ -472,6 +465,111 @@ class Database:
                     .where(ORMStatus.status == status)
                 ).scalar()
             return result or 0
+
+    # ── User Posting State methods ─────────────────────────────
+
+    def set_interest(
+        self, posting_id: int, value: bool | None, user_id: int = 1
+    ) -> None:
+        """Set interest for a posting. value=None means clear (unevaluated).
+
+        Also increments labels_since_last_train and checks retrain threshold.
+        """
+        from quarry.store.models import UserPostingState as ORMState
+        from quarry.store.models import UserSetting as ORMUserSetting
+
+        with session_scope(engine=self.engine) as session:
+            # Upsert the interest value
+            session.execute(
+                sqlite_insert(ORMState)
+                .values(
+                    user_id=user_id,
+                    posting_id=posting_id,
+                    interest=value,
+                    labeled_at=func.now(),
+                    updated_at=func.now(),
+                )
+                .on_conflict_do_update(
+                    index_elements=["user_id", "posting_id"],
+                    set_=dict(
+                        interest=value, labeled_at=func.now(), updated_at=func.now()
+                    ),
+                )
+            )
+
+            if value is None:
+                return  # clearing interest doesn't count as a training label action
+
+            # Increment labels_since_last_train
+            row = session.execute(
+                select(ORMUserSetting.value).where(
+                    ORMUserSetting.user_id == user_id,
+                    ORMUserSetting.key == "labels_since_last_train",
+                )
+            ).scalar_one_or_none()
+            current = int(row) if row and row.isdigit() else 0
+            new_count = current + 1
+
+            # Read threshold
+            threshold_row = session.execute(
+                select(ORMUserSetting.value).where(
+                    ORMUserSetting.user_id == user_id,
+                    ORMUserSetting.key == "retrain_label_threshold",
+                )
+            ).scalar_one_or_none()
+            threshold = (
+                int(threshold_row) if threshold_row and threshold_row.isdigit() else 20
+            )
+
+            # Upsert counter
+            session.execute(
+                sqlite_insert(ORMUserSetting)
+                .values(
+                    user_id=user_id,
+                    key="labels_since_last_train",
+                    value=str(new_count),
+                    updated_at=func.now(),
+                )
+                .on_conflict_do_update(
+                    index_elements=["user_id", "key"],
+                    set_=dict(value=str(new_count), updated_at=func.now()),
+                )
+            )
+
+            # Set retrain_pending if threshold reached
+            if new_count >= threshold:
+                session.execute(
+                    sqlite_insert(ORMUserSetting)
+                    .values(
+                        user_id=user_id,
+                        key="retrain_pending",
+                        value="true",
+                        updated_at=func.now(),
+                    )
+                    .on_conflict_do_update(
+                        index_elements=["user_id", "key"],
+                        set_=dict(value="true", updated_at=func.now()),
+                    )
+                )
+
+    def set_applied(self, posting_id: int, value: bool, user_id: int = 1) -> None:
+        """Set applied status for a posting."""
+        from quarry.store.models import UserPostingState as ORMState
+
+        with session_scope(engine=self.engine) as session:
+            session.execute(
+                sqlite_insert(ORMState)
+                .values(
+                    user_id=user_id,
+                    posting_id=posting_id,
+                    applied=value,
+                    updated_at=func.now(),
+                )
+                .on_conflict_do_update(
+                    index_elements=["user_id", "posting_id"],
+                    set_=dict(applied=value, updated_at=func.now()),
+                )
+            )
 
     # ── Label methods ──────────────────────────────────────────
 

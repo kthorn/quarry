@@ -1726,3 +1726,183 @@ class TestSearchQueryMethods:
         assert len(user2_queries) == 1
         assert user1_queries[0].query_text == "frontend engineer"
         assert user2_queries[0].query_text == "backend engineer"
+
+
+# ── User Posting State methods (set_interest, set_applied) ──────
+
+
+def _setup_posting(db, db_path, company_name="Acme"):
+    """Helper: create a company + posting, return (company_id, posting_id)."""
+    cid = db.insert_company(models.Company(name=company_name))
+    posting = models.JobPosting(
+        company_id=cid, title="Engineer", title_hash="abc123", url="http://x.com/j"
+    )
+    pid = db.insert_posting(posting)
+    return cid, pid
+
+
+class TestSetInterest:
+    def test_set_interest_true(self, db, db_path):
+        """set_interest(True) stores interest=True in user_posting_state."""
+        _, pid = _setup_posting(db, db_path)
+        db.set_interest(pid, True)
+
+        conn = _raw(db_path)
+        row = conn.execute(
+            "SELECT interest FROM user_posting_state WHERE user_id = 1 AND posting_id = ?",
+            (pid,),
+        ).fetchone()
+        conn.close()
+        assert row is not None
+        assert row["interest"] == 1
+
+    def test_set_interest_false(self, db, db_path):
+        """set_interest(False) stores interest=False in user_posting_state."""
+        _, pid = _setup_posting(db, db_path)
+        db.set_interest(pid, False)
+
+        conn = _raw(db_path)
+        row = conn.execute(
+            "SELECT interest FROM user_posting_state WHERE user_id = 1 AND posting_id = ?",
+            (pid,),
+        ).fetchone()
+        conn.close()
+        assert row is not None
+        assert row["interest"] == 0
+
+    def test_set_interest_none_clears(self, db, db_path):
+        """set_interest(None) clears interest (sets to NULL)."""
+        _, pid = _setup_posting(db, db_path)
+        # First set True
+        db.set_interest(pid, True)
+        # Then clear
+        db.set_interest(pid, None)
+
+        conn = _raw(db_path)
+        row = conn.execute(
+            "SELECT interest FROM user_posting_state WHERE user_id = 1 AND posting_id = ?",
+            (pid,),
+        ).fetchone()
+        conn.close()
+        assert row is not None
+        assert row["interest"] is None
+
+    def test_set_interest_updates_labeled_at(self, db, db_path):
+        """set_interest always updates labeled_at timestamp."""
+        _, pid = _setup_posting(db, db_path)
+        db.set_interest(pid, True)
+
+        conn = _raw(db_path)
+        row = conn.execute(
+            "SELECT labeled_at FROM user_posting_state WHERE user_id = 1 AND posting_id = ?",
+            (pid,),
+        ).fetchone()
+        conn.close()
+        assert row is not None
+        assert row["labeled_at"] is not None
+
+    def test_set_interest_increments_label_counter(self, db, db_path):
+        """Setting interest (True/False) increments labels_since_last_train."""
+        _, pid = _setup_posting(db, db_path)
+        # Initial counter should default to 0
+        assert db.get_user_setting(1, "labels_since_last_train") is None
+
+        db.set_interest(pid, True)
+        assert db.get_user_setting(1, "labels_since_last_train") == "1"
+
+        db.set_interest(pid, False)
+        assert db.get_user_setting(1, "labels_since_last_train") == "2"
+
+    def test_set_interest_none_does_not_increment_counter(self, db, db_path):
+        """Setting interest=None does not count as a label action."""
+        _, pid = _setup_posting(db, db_path)
+        db.set_interest(pid, True)
+        assert db.get_user_setting(1, "labels_since_last_train") == "1"
+
+        # Clearing should NOT increment
+        db.set_interest(pid, None)
+        assert db.get_user_setting(1, "labels_since_last_train") == "1"
+
+    def test_set_interest_threshold_triggers_retrain(self, db, db_path):
+        """When labels_since_last_train reaches threshold, retrain_pending = true."""
+        _, pid = _setup_posting(db, db_path)
+        # Set threshold to 2
+        db.save_user_setting(1, "retrain_label_threshold", "2")
+
+        # First label: count 1, not at threshold
+        db.set_interest(pid, True)
+        assert db.get_user_setting(1, "retrain_pending") is None
+
+        # set_interest on another posting to increment counter
+        pid2 = db.insert_posting(
+            models.JobPosting(
+                company_id=db.get_posting_by_id(pid).company_id,
+                title="Manager",
+                title_hash="xyz",
+                url="http://x.com/m",
+            )
+        )
+        db.set_interest(pid2, False)
+        assert db.get_user_setting(1, "labels_since_last_train") == "2"
+        assert db.get_user_setting(1, "retrain_pending") == "true"
+
+    def test_set_interest_idempotent_on_same_posting(self, db, db_path):
+        """Repeated interest on same posting still increments counter (upsert)."""
+        _, pid = _setup_posting(db, db_path)
+        db.set_interest(pid, True)
+        assert db.get_user_setting(1, "labels_since_last_train") == "1"
+
+        db.set_interest(pid, False)  # change mind
+        assert db.get_user_setting(1, "labels_since_last_train") == "2"
+
+
+class TestSetApplied:
+    def test_set_applied_true(self, db, db_path):
+        """set_applied(True) stores applied=1 in user_posting_state."""
+        _, pid = _setup_posting(db, db_path)
+        db.set_applied(pid, True)
+
+        conn = _raw(db_path)
+        row = conn.execute(
+            "SELECT applied FROM user_posting_state WHERE user_id = 1 AND posting_id = ?",
+            (pid,),
+        ).fetchone()
+        conn.close()
+        assert row is not None
+        assert row["applied"] == 1
+
+    def test_set_applied_false(self, db, db_path):
+        """set_applied(False) stores applied=0 in user_posting_state."""
+        _, pid = _setup_posting(db, db_path)
+        db.set_applied(pid, False)
+
+        conn = _raw(db_path)
+        row = conn.execute(
+            "SELECT applied FROM user_posting_state WHERE user_id = 1 AND posting_id = ?",
+            (pid,),
+        ).fetchone()
+        conn.close()
+        assert row is not None
+        assert row["applied"] == 0
+
+    def test_set_applied_does_not_increment_label_counter(self, db, db_path):
+        """set_applied does not affect labels_since_last_train."""
+        _, pid = _setup_posting(db, db_path)
+        db.set_applied(pid, True)
+        assert db.get_user_setting(1, "labels_since_last_train") is None
+
+    def test_set_interest_and_applied_independent(self, db, db_path):
+        """set_interest and set_applied can be set independently on same posting."""
+        _, pid = _setup_posting(db, db_path)
+        db.set_interest(pid, True)
+        db.set_applied(pid, True)
+
+        conn = _raw(db_path)
+        row = conn.execute(
+            "SELECT interest, applied FROM user_posting_state WHERE user_id = 1 AND posting_id = ?",
+            (pid,),
+        ).fetchone()
+        conn.close()
+        assert row is not None
+        assert row["interest"] == 1
+        assert row["applied"] == 1
