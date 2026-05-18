@@ -48,11 +48,11 @@ def train_classifier(
         }
 
     dim = get_embedding_dim()
-    signal_labels = []
+    interest_labels = []
     embeddings = []
 
     for row in rows:
-        signal, emb_bytes, posting_id = row
+        interest_bool, emb_bytes, posting_id = row
         if emb_bytes is None:
             continue
         try:
@@ -61,29 +61,29 @@ def train_classifier(
             continue
         posting = SimpleNamespace(embedding=emb, id=posting_id)
         embeddings.append(posting)
-        signal_labels.append(signal)
+        interest_labels.append(interest_bool)
 
-    if len(signal_labels) < min_labels:
+    if len(interest_labels) < min_labels:
         return {
             "error": (
-                f"Not enough labeled postings ({len(signal_labels)} < {min_labels}). "
+                f"Not enough labeled postings ({len(interest_labels)} < {min_labels}). "
                 "Label more postings first."
             ),
-            "training_samples": len(signal_labels),
+            "training_samples": len(interest_labels),
         }
 
     scorer = ClassifierScorer(min_training_labels=min_labels)
-    result = scorer.fit(signal_labels, embeddings)
+    result = scorer.fit(interest_labels, embeddings)
     if result is None:
         return {
             "error": (
                 "Training failed — check logs for details. "
-                f"Had {len(signal_labels)} labeled postings, "
+                f"Had {len(interest_labels)} labeled postings, "
                 f"but the classifier requires at least {min_labels} with both "
                 "positive and negative classes present and enough per class for "
                 "cross-validation."
             ),
-            "training_samples": len(signal_labels),
+            "training_samples": len(interest_labels),
         }
 
     # Persist ClassifierVersion via ORM
