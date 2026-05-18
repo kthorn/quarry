@@ -288,83 +288,6 @@ def test_classifier_scores_survive_model_deletion(tmp_path):
 # ── Per-user data isolation ─────────────────────────────────────
 
 
-def test_multi_user_label_isolation(tmp_path):
-    """User 1's labels are not visible to User 2."""
-    db_path = tmp_path / "test.db"
-    init_db(db_path)
-
-    conn = sqlite3.connect(db_path)
-    conn.execute("PRAGMA foreign_keys = ON")
-
-    # Setup: company + posting + second user
-    conn.execute("INSERT INTO companies (name) VALUES ('Acme')")
-    conn.execute("""INSERT INTO job_postings (company_id, title, title_hash, url)
-                    VALUES (1, 'Engineer', 'abc', 'http://x.com')""")
-    conn.execute("INSERT OR IGNORE INTO users (id, email) VALUES (1, 'u1@b.com')")
-    conn.execute("INSERT OR IGNORE INTO users (id, email) VALUES (2, 'u2@b.com')")
-
-    # User 1 rates positively, User 2 rates negatively on SAME posting
-    conn.execute(
-        "INSERT INTO user_labels (user_id, posting_id, signal) VALUES (1, 1, 'positive')"
-    )
-    conn.execute(
-        "INSERT INTO user_labels (user_id, posting_id, signal) VALUES (2, 1, 'negative')"
-    )
-    conn.commit()
-
-    # User 1 sees only their positive label
-    u1_labels = conn.execute(
-        "SELECT signal FROM user_labels WHERE user_id = 1 AND posting_id = 1"
-    ).fetchall()
-    assert len(u1_labels) == 1
-    assert u1_labels[0][0] == "positive"
-
-    # User 2 sees only their negative label
-    u2_labels = conn.execute(
-        "SELECT signal FROM user_labels WHERE user_id = 2 AND posting_id = 1"
-    ).fetchall()
-    assert len(u2_labels) == 1
-    assert u2_labels[0][0] == "negative"
-
-    conn.close()
-
-
-def test_multi_user_posting_status_isolation(tmp_path):
-    """User 1's posting status does not affect User 2's status."""
-    db_path = tmp_path / "test.db"
-    init_db(db_path)
-
-    conn = sqlite3.connect(db_path)
-    conn.execute("PRAGMA foreign_keys = ON")
-
-    conn.execute("INSERT INTO companies (name) VALUES ('Acme')")
-    conn.execute("""INSERT INTO job_postings (company_id, title, title_hash, url)
-                    VALUES (1, 'Engineer', 'abc', 'http://x.com')""")
-    conn.execute("INSERT OR IGNORE INTO users (id, email) VALUES (1, 'u1@b.com')")
-    conn.execute("INSERT OR IGNORE INTO users (id, email) VALUES (2, 'u2@b.com')")
-
-    # User 1 marks as applied, User 2 hasn't seen it
-    conn.execute(
-        "INSERT INTO user_posting_status (user_id, posting_id, status) VALUES (1, 1, 'applied')"
-    )
-    conn.execute(
-        "INSERT INTO user_posting_status (user_id, posting_id, status) VALUES (2, 1, 'new')"
-    )
-    conn.commit()
-
-    u1_status = conn.execute(
-        "SELECT status FROM user_posting_status WHERE user_id = 1 AND posting_id = 1"
-    ).fetchone()
-    u2_status = conn.execute(
-        "SELECT status FROM user_posting_status WHERE user_id = 2 AND posting_id = 1"
-    ).fetchone()
-
-    assert u1_status[0] == "applied"
-    assert u2_status[0] == "new"
-
-    conn.close()
-
-
 def test_multi_user_watchlist_isolation(tmp_path):
     """User 1's watchlist is independent of User 2's."""
     db_path = tmp_path / "test.db"
@@ -437,63 +360,6 @@ def test_multi_user_similarity_score_isolation(tmp_path):
 # ── UNIQUE constraints ──────────────────────────────────────────
 
 
-def test_user_labels_unique_constraint(tmp_path):
-    """UNIQUE(user_id, posting_id, signal) prevents duplicate labels."""
-    db_path = tmp_path / "test.db"
-    init_db(db_path)
-
-    conn = sqlite3.connect(db_path)
-    conn.execute("PRAGMA foreign_keys = ON")
-
-    conn.execute("INSERT INTO companies (name) VALUES ('Acme')")
-    conn.execute("""INSERT INTO job_postings (company_id, title, title_hash, url)
-                    VALUES (1, 'Engineer', 'abc', 'http://x.com')""")
-    conn.execute("INSERT OR IGNORE INTO users (id, email) VALUES (1, 'u1@b.com')")
-
-    conn.execute(
-        "INSERT INTO user_labels (user_id, posting_id, signal) VALUES (1, 1, 'positive')"
-    )
-
-    with pytest.raises(sqlite3.IntegrityError):
-        conn.execute(
-            "INSERT INTO user_labels (user_id, posting_id, signal) VALUES (1, 1, 'positive')"
-        )
-
-    conn.close()
-
-
-def test_user_labels_allows_different_signals_on_same_posting(tmp_path):
-    """A user can have multiple signal types on the same posting (positive + applied)."""
-    db_path = tmp_path / "test.db"
-    init_db(db_path)
-
-    conn = sqlite3.connect(db_path)
-    conn.execute("PRAGMA foreign_keys = ON")
-
-    conn.execute("INSERT INTO companies (name) VALUES ('Acme')")
-    conn.execute("""INSERT INTO job_postings (company_id, title, title_hash, url)
-                    VALUES (1, 'Engineer', 'abc', 'http://x.com')""")
-    conn.execute("INSERT OR IGNORE INTO users (id, email) VALUES (1, 'u1@b.com')")
-
-    # Both should succeed — different signals
-    conn.execute(
-        "INSERT INTO user_labels (user_id, posting_id, signal) VALUES (1, 1, 'positive')"
-    )
-    conn.execute(
-        "INSERT INTO user_labels (user_id, posting_id, signal) VALUES (1, 1, 'applied')"
-    )
-    conn.commit()
-
-    labels = conn.execute(
-        "SELECT signal FROM user_labels WHERE user_id = 1 AND posting_id = 1 ORDER BY signal"
-    ).fetchall()
-    assert len(labels) == 2
-    assert labels[0][0] == "applied"
-    assert labels[1][0] == "positive"
-
-    conn.close()
-
-
 def test_user_watchlist_unique_constraint(tmp_path):
     """UNIQUE(user_id, company_id) prevents duplicate watchlist entries."""
     db_path = tmp_path / "test.db"
@@ -509,100 +375,6 @@ def test_user_watchlist_unique_constraint(tmp_path):
 
     with pytest.raises(sqlite3.IntegrityError):
         conn.execute("INSERT INTO user_watchlist (user_id, company_id) VALUES (1, 1)")
-
-    conn.close()
-
-
-def test_user_posting_status_unique_constraint(tmp_path):
-    """UNIQUE(user_id, posting_id) prevents duplicate status entries."""
-    db_path = tmp_path / "test.db"
-    init_db(db_path)
-
-    conn = sqlite3.connect(db_path)
-    conn.execute("PRAGMA foreign_keys = ON")
-
-    conn.execute("INSERT INTO companies (name) VALUES ('Acme')")
-    conn.execute("""INSERT INTO job_postings (company_id, title, title_hash, url)
-                    VALUES (1, 'Engineer', 'abc', 'http://x.com')""")
-    conn.execute("INSERT OR IGNORE INTO users (id, email) VALUES (1, 'u1@b.com')")
-
-    conn.execute("INSERT INTO user_posting_status (user_id, posting_id) VALUES (1, 1)")
-
-    with pytest.raises(sqlite3.IntegrityError):
-        conn.execute(
-            "INSERT INTO user_posting_status (user_id, posting_id) VALUES (1, 1)"
-        )
-
-    conn.close()
-
-
-# ── CHECK constraints ───────────────────────────────────────────
-
-
-def test_check_constraint_user_labels_signal_invalid(tmp_path):
-    """CHECK on user_labels.signal rejects invalid values."""
-    db_path = tmp_path / "test.db"
-    init_db(db_path)
-
-    conn = sqlite3.connect(db_path)
-    conn.execute("PRAGMA foreign_keys = ON")
-
-    conn.execute("INSERT INTO companies (name) VALUES ('Acme')")
-    conn.execute("""INSERT INTO job_postings (company_id, title, title_hash, url)
-                    VALUES (1, 'Engineer', 'abc', 'http://x.com')""")
-    conn.execute("INSERT OR IGNORE INTO users (id, email) VALUES (1, 'u1@b.com')")
-
-    with pytest.raises(sqlite3.IntegrityError):
-        conn.execute(
-            "INSERT INTO user_labels (user_id, posting_id, signal) VALUES (1, 1, 'invalid_signal')"
-        )
-
-    conn.close()
-
-
-def test_check_constraint_user_labels_signal_valid(tmp_path):
-    """Verify all valid signals are accepted."""
-    db_path = tmp_path / "test.db"
-    init_db(db_path)
-
-    conn = sqlite3.connect(db_path)
-    conn.execute("PRAGMA foreign_keys = ON")
-
-    conn.execute("INSERT INTO companies (name) VALUES ('Acme')")
-    conn.execute("""INSERT INTO job_postings (company_id, title, title_hash, url)
-                    VALUES (1, 'Engineer', 'abc', 'http://x.com')""")
-    conn.execute("INSERT OR IGNORE INTO users (id, email) VALUES (1, 'u1@b.com')")
-
-    for signal in ["positive", "negative", "applied", "skip"]:
-        conn.execute(
-            f"INSERT INTO user_labels (user_id, posting_id, signal) VALUES (1, 1, '{signal}')"
-        )
-
-    count = conn.execute(
-        "SELECT COUNT(*) FROM user_labels WHERE user_id = 1 AND posting_id = 1"
-    ).fetchone()[0]
-    assert count == 4, f"Expected 4 signals, got {count}"
-
-    conn.close()
-
-
-def test_check_constraint_user_posting_status_invalid(tmp_path):
-    """CHECK on user_posting_status.status rejects invalid values."""
-    db_path = tmp_path / "test.db"
-    init_db(db_path)
-
-    conn = sqlite3.connect(db_path)
-    conn.execute("PRAGMA foreign_keys = ON")
-
-    conn.execute("INSERT INTO companies (name) VALUES ('Acme')")
-    conn.execute("""INSERT INTO job_postings (company_id, title, title_hash, url)
-                    VALUES (1, 'Engineer', 'abc', 'http://x.com')""")
-    conn.execute("INSERT OR IGNORE INTO users (id, email) VALUES (1, 'u1@b.com')")
-
-    with pytest.raises(sqlite3.IntegrityError):
-        conn.execute(
-            "INSERT INTO user_posting_status (user_id, posting_id, status) VALUES (1, 1, 'bogus')"
-        )
 
     conn.close()
 
@@ -912,21 +684,27 @@ def test_insert_and_get_posting(db):
     assert fetched.title == "Engineer"
 
 
-def test_insert_posting_creates_status(db, db_path):
-    cid = db.insert_company(models.Company(name="Acme"))
-    posting = models.JobPosting(
-        company_id=cid, title="Engineer", title_hash="abc", url="http://x.com"
-    )
-    pid = db.insert_posting(posting)
+def test_insert_posting(db, db_path):
+    """Inserting a posting creates a row in job_postings."""
+    import sqlite3
 
-    conn = _raw(db_path)
-    row = conn.execute(
-        "SELECT status FROM user_posting_status WHERE user_id = 1 AND posting_id = ?",
-        (pid,),
-    ).fetchone()
+    company = models.Company(name="AcmeCorp")
+    cid = db.insert_company(company)
+    pid = db.insert_posting(
+        models.JobPosting(
+            company_id=cid,
+            title="Engineer",
+            title_hash="abc",
+            url="http://x.com",
+        )
+    )
+    conn = sqlite3.connect(db_path)
+    conn.execute("PRAGMA foreign_keys = ON")
+    count = conn.execute(
+        "SELECT COUNT(*) FROM job_postings WHERE id = ?", (pid,)
+    ).fetchone()[0]
+    assert count == 1
     conn.close()
-    assert row is not None
-    assert row["status"] == "new"
 
 
 def test_posting_exists(db):
@@ -1026,24 +804,6 @@ def test_mark_postings_seen(db, db_path):
     assert row["status"] == "seen"
 
 
-def test_update_posting_status(db, db_path):
-    cid = db.insert_company(models.Company(name="Acme"))
-    posting = models.JobPosting(
-        company_id=cid, title="E", title_hash="h", url="http://x.com"
-    )
-    pid = db.insert_posting(posting)
-
-    db.update_posting_status(pid, "applied")
-
-    conn = _raw(db_path)
-    row = conn.execute(
-        "SELECT status FROM user_posting_status WHERE user_id = 1 AND posting_id = ?",
-        (pid,),
-    ).fetchone()
-    conn.close()
-    assert row["status"] == "applied"
-
-
 def test_count_postings(db):
     cid = db.insert_company(models.Company(name="Acme"))
     db.insert_posting(
@@ -1078,27 +838,22 @@ def test_get_postings_with_scores(db):
     assert results[0]["company_name"] == "Acme"
 
 
-def test_get_postings_with_scores_status_new_defaults(db):
-    """Postings with no explicit status row should appear as 'new'."""
-    cid = db.insert_company(models.Company(name="Acme"))
-    posting = models.JobPosting(
-        company_id=cid, title="E", title_hash="h", url="http://x.com"
+def test_get_postings_with_scores_default(db):
+    """get_postings_with_scores returns postings."""
+    company = models.Company(name="Acme")
+    cid = db.insert_company(company)
+    db.insert_posting(
+        models.JobPosting(
+            company_id=cid,
+            title="Engineer",
+            title_hash="gpws_1",
+            url="https://x.com/gpws_1",
+        )
     )
-    db.insert_posting(posting)
-
-    # Not yet seen by any user — should appear as "new"
-    results = db.get_postings_with_scores(status="new")
-    assert len(results) == 1
-
-    # After marking as seen, should not appear as "new"
-    pid = results[0]["id"]
-    db.update_posting_status(pid, "seen")
-    results = db.get_postings_with_scores(status="new")
-    assert len(results) == 0
-
-    # Should appear as "seen"
-    results = db.get_postings_with_scores(status="seen")
-    assert len(results) == 1
+    results = db.get_postings_with_scores()
+    assert len(results) >= 1
+    assert results[0]["title"] == "Engineer"
+    assert results[0]["interest"] is None
 
 
 def test_get_postings_with_scores_includes_similarity(db):
@@ -1214,31 +969,6 @@ class TestGetPostingsWithScores:
         results = db.get_postings_with_scores(search="zookeeper")
         assert len(results) == 0
 
-    def test_search_with_status_filter(self, tmp_path):
-        db = init_db(tmp_path / "test.db")
-        company = models.Company(name="TestCorp")
-        cid = db.insert_company(company)
-        db.insert_posting(
-            models.JobPosting(
-                company_id=cid,
-                title="Data Engineer",
-                title_hash="srch7",
-                url="https://example.com/srch7",
-            )
-        )
-        pid2 = db.insert_posting(
-            models.JobPosting(
-                company_id=cid,
-                title="Data Manager",
-                title_hash="srch8",
-                url="https://example.com/srch8",
-            )
-        )
-        db.update_posting_status(pid2, "applied")
-        results = db.get_postings_with_scores(status="new", search="data")
-        assert len(results) == 1
-        assert results[0]["title"] == "Data Engineer"
-
     def test_search_special_characters(self, tmp_path):
         """LIKE wildcards % and _ in search terms should be escaped."""
         db = init_db(tmp_path / "test.db")
@@ -1304,52 +1034,6 @@ class TestGetPostingsWithScores:
         )
         results = db.get_postings_with_scores(search=None)
         assert len(results) == 1
-
-
-# ── Label CRUD ─────────────────────────────────────────────────
-
-
-def test_insert_and_get_label(db):
-    cid = db.insert_company(models.Company(name="Acme"))
-    posting = models.JobPosting(
-        company_id=cid, title="E", title_hash="h", url="http://x.com"
-    )
-    pid = db.insert_posting(posting)
-
-    label = models.UserLabel(
-        user_id=1, posting_id=pid, signal="positive", notes="great fit"
-    )
-    lid = db.insert_label(label)
-    assert lid > 0
-
-    labels = db.get_labels_for_posting(pid)
-    assert len(labels) == 1
-    assert labels[0].signal == "positive"
-    assert labels[0].notes == "great fit"
-
-
-def test_get_labels_for_posting_user_isolation(db, db_path):
-    cid = db.insert_company(models.Company(name="Acme"))
-    posting = models.JobPosting(
-        company_id=cid, title="E", title_hash="h", url="http://x.com"
-    )
-    pid = db.insert_posting(posting)
-
-    db.insert_label(models.UserLabel(user_id=1, posting_id=pid, signal="positive"))
-
-    # Insert label for user 2 via raw sqlite3 (FK off by default)
-    conn = _raw(db_path)
-    conn.execute("INSERT OR IGNORE INTO users (id, email) VALUES (2, 'u2@b.com')")
-    conn.execute(
-        "INSERT INTO user_labels (user_id, posting_id, signal) VALUES (2, ?, 'negative')",
-        (pid,),
-    )
-    conn.commit()
-    conn.close()
-
-    labels = db.get_labels_for_posting(pid, user_id=1)
-    assert len(labels) == 1
-    assert labels[0].signal == "positive"
 
 
 # ── System methods ─────────────────────────────────────────────
@@ -1906,3 +1590,43 @@ class TestSetApplied:
         assert row is not None
         assert row["interest"] == 1
         assert row["applied"] == 1
+
+
+class TestGetPostingsWithScoresNew:
+    """Tests for the rewritten get_postings_with_scores method."""
+
+    def test_interest_filter_interested(self, db):
+        """Interest filter 'interested' returns only interest=True postings."""
+        company = models.Company(name="FilterCo")
+        cid = db.insert_company(company)
+        pid1 = db.insert_posting(
+            models.JobPosting(company_id=cid, title="Good Job", title_hash="f1",
+                              url="https://x.com/f1"))
+        pid2 = db.insert_posting(
+            models.JobPosting(company_id=cid, title="Bad Job", title_hash="f2",
+                              url="https://x.com/f2"))
+
+        db.set_interest(pid1, True)
+        db.set_interest(pid2, False)
+
+        results = db.get_postings_with_scores(interest="interested")
+        assert len(results) == 1
+        assert results[0]["title"] == "Good Job"
+
+    def test_interest_filter_untagged(self, db):
+        """Interest filter 'untagged' returns only interest=NULL postings."""
+        company = models.Company(name="FilterCo2")
+        cid = db.insert_company(company)
+        pid1 = db.insert_posting(
+            models.JobPosting(company_id=cid, title="Tagged", title_hash="f3",
+                              url="https://x.com/f3"))
+        db.insert_posting(
+            models.JobPosting(company_id=cid, title="Untagged", title_hash="f4",
+                              url="https://x.com/f4"))
+
+        db.set_interest(pid1, True)
+
+        results = db.get_postings_with_scores(interest="untagged")
+        titles = [r["title"] for r in results]
+        assert "Untagged" in titles
+        assert "Tagged" not in titles
