@@ -86,6 +86,7 @@ All completed plans and design specs live in `docs/plans/completed/`:
 - **Note:** All four phases complete. All callers use per-user ORM methods with `user_id=1`. `get_recent_postings`/`get_postings_paginated`/`db.execute()` removed. Backward-compat aliases removed from `models.py`.
 - **Ranking pipeline:** `python -m quarry.rank list-scorers` — shows 5 registered scorers
 - **Ranking CLI:** `python -m quarry.rank config get|set`, `python -m quarry.rank train`, `python -m quarry.rank evaluate`, `python -m quarry.rank recompute`
+- **Alembic migration `0848f0dc9297`**: unifies `user_labels` and `user_posting_status` into `user_posting_state` table; `alembic upgrade head` applies cleanly; downgrade re-creates original tables; env.py fixed to place `PRAGMA foreign_keys = ON` inside migration transaction to avoid SQLAlchemy autobegin issue
 
 ## Remaining MVP Tasks (from TASKS.md)
 
@@ -169,4 +170,6 @@ alembic/
 ├── env.py          Alembic environment (targets ORM Base metadata)
 └── versions/       4596e16062f9_initial_multi_user_schema.py
                    538837880514_add_ranking_pipeline.py
+                   a09b5faf35b6_add_company_description.py
+                   0848f0dc9297_unify_posting_state.py
 ```
