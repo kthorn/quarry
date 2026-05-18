@@ -44,6 +44,8 @@ def upgrade() -> None:
     op.create_index("idx_state_user", "user_posting_state", ["user_id"])
     op.create_index("idx_state_posting", "user_posting_state", ["posting_id"])
     op.create_index("idx_state_interest", "user_posting_state", ["user_id", "interest"])
+    # Drop old tables. No data migrated — existing labels (including
+    # auto-derived signals like seen→negative) are considered untrusted.
     op.drop_table("user_labels")
     op.drop_table("user_posting_status")
 
