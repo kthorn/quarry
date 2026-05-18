@@ -1451,26 +1451,24 @@ class Database:
             )
 
     def get_labels_with_postings(self, user_id: int = 1) -> list[tuple]:
-        """Fetch all user labels with posting embeddings for classifier training.
+        """Fetch all user interest labels with posting embeddings for classifier training.
 
-        Returns list of (signal: str, embedding: bytes | None, posting_id: int).
-        Signal values are eagerly loaded inside the session to avoid
-        DetachedInstanceError when accessing them after the session closes.
+        Returns list of (interest: bool, embedding: bytes | None, posting_id: int).
+        Only returns rows where interest IS NOT NULL.
         """
         from quarry.store.models import JobPosting as ORMPosting
-        from quarry.store.models import UserLabel as ORMLabel
+        from quarry.store.models import UserPostingState as ORMState
 
         with session_scope(engine=self.engine) as session:
             result = session.execute(
-                select(ORMLabel, ORMPosting.embedding, ORMPosting.id)
-                .join(ORMPosting, ORMLabel.posting_id == ORMPosting.id)
+                select(ORMState.interest, ORMPosting.embedding, ORMPosting.id)
+                .join(ORMPosting, ORMState.posting_id == ORMPosting.id)
                 .where(
-                    ORMLabel.user_id == user_id,
-                    ORMLabel.signal.in_(["positive", "negative"]),
+                    ORMState.user_id == user_id,
+                    ORMState.interest.isnot(None),
                 )
             ).all()
-            # Access .signal inside the session to avoid lazy-load on detached instance
-            return [(row[0].signal, row[1], row[2]) for row in result]
+            return [(bool(row[0]), row[1], row[2]) for row in result]
 
     def upsert_classifier_score(
         self,
