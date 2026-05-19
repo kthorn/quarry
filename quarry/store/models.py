@@ -115,12 +115,6 @@ class JobPosting(Base):
     locations: Mapped[list["JobPostingLocation"]] = relationship(
         back_populates="posting", cascade="all, delete-orphan"
     )
-    posting_statuses: Mapped[list["UserPostingStatus"]] = relationship(
-        back_populates="posting", cascade="all, delete-orphan"
-    )
-    labels: Mapped[list["UserLabel"]] = relationship(
-        back_populates="posting", cascade="all, delete-orphan"
-    )
     similarity_scores: Mapped[list["UserSimilarityScore"]] = relationship(
         back_populates="posting", cascade="all, delete-orphan"
     )
@@ -131,6 +125,9 @@ class JobPosting(Base):
         back_populates="posting", cascade="all, delete-orphan"
     )
     ranking_scores: Mapped[list["UserRankingScore"]] = relationship(
+        back_populates="posting", cascade="all, delete-orphan"
+    )
+    posting_states: Mapped[list["UserPostingState"]] = relationship(
         back_populates="posting", cascade="all, delete-orphan"
     )
 
@@ -277,12 +274,6 @@ class User(Base):
     watchlist_items: Mapped[list["UserWatchlistItem"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
-    posting_statuses: Mapped[list["UserPostingStatus"]] = relationship(
-        back_populates="user", cascade="all, delete-orphan"
-    )
-    labels: Mapped[list["UserLabel"]] = relationship(
-        back_populates="user", cascade="all, delete-orphan"
-    )
     search_queries: Mapped[list["UserSearchQuery"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
@@ -302,6 +293,9 @@ class User(Base):
         back_populates="user", cascade="all, delete-orphan"
     )
     ranking_scores: Mapped[list["UserRankingScore"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+    posting_states: Mapped[list["UserPostingState"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
 
@@ -337,74 +331,6 @@ class UserWatchlistItem(Base):
     # Relationships
     user: Mapped["User"] = relationship(back_populates="watchlist_items")
     company: Mapped["Company"] = relationship(back_populates="watchlist_items")
-
-
-class UserPostingStatus(Base):
-    __tablename__ = "user_posting_status"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    user_id: Mapped[int] = mapped_column(
-        Integer,
-        ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    posting_id: Mapped[int] = mapped_column(
-        Integer,
-        ForeignKey("job_postings.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    status: Mapped[Optional[str]] = mapped_column(Text, server_default=text("'new'"))
-    first_seen_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-    last_seen_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-
-    __table_args__ = (
-        UniqueConstraint("user_id", "posting_id"),
-        CheckConstraint(
-            "status IN ('new','seen','applied','rejected','archived')",
-            name="ck_posting_status_status",
-        ),
-        Index("idx_posting_status_user", "user_id"),
-        Index("idx_posting_status_posting", "posting_id"),
-        Index("idx_posting_status_status", "user_id", "status"),
-    )
-
-    # Relationships
-    user: Mapped["User"] = relationship(back_populates="posting_statuses")
-    posting: Mapped["JobPosting"] = relationship(back_populates="posting_statuses")
-
-
-class UserLabel(Base):
-    __tablename__ = "user_labels"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    user_id: Mapped[int] = mapped_column(
-        Integer,
-        ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    posting_id: Mapped[int] = mapped_column(
-        Integer,
-        ForeignKey("job_postings.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    signal: Mapped[str] = mapped_column(Text, nullable=False)
-    notes: Mapped[Optional[str]] = mapped_column(Text)
-    labeled_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-    label_source: Mapped[str] = mapped_column(Text, server_default=text("'user'"))
-
-    __table_args__ = (
-        UniqueConstraint("user_id", "posting_id", "signal"),
-        CheckConstraint(
-            "signal IN ('positive','negative','applied','skip')",
-            name="ck_user_labels_signal",
-        ),
-        Index("idx_labels_user", "user_id"),
-        Index("idx_labels_posting", "posting_id"),
-    )
-
-    # Relationships
-    user: Mapped["User"] = relationship(back_populates="labels")
-    posting: Mapped["JobPosting"] = relationship(back_populates="labels")
 
 
 class UserSearchQuery(Base):
@@ -544,6 +470,38 @@ class UserSetting(Base):
 
     # Relationships
     user: Mapped["User"] = relationship(back_populates="settings")
+
+
+class UserPostingState(Base):
+    __tablename__ = "user_posting_state"
+
+    user_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    posting_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("job_postings.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    interest: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    applied: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("0")
+    )
+    notes: Mapped[Optional[str]] = mapped_column(Text)
+    labeled_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    __table_args__ = (
+        Index("idx_state_user", "user_id"),
+        Index("idx_state_posting", "posting_id"),
+        Index("idx_state_interest", "user_id", "interest"),
+    )
+
+    # Relationships
+    user: Mapped["User"] = relationship(back_populates="posting_states")
+    posting: Mapped["JobPosting"] = relationship(back_populates="posting_states")
 
 
 class PipelineConfig(Base):

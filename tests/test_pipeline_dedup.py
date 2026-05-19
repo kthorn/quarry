@@ -78,4 +78,5 @@ def test_different_postings_are_both_inserted(tmp_path):
     # Verify both exist
     assert db.posting_exists_by_url("https://example.com/job/123")
     assert db.posting_exists_by_url("https://example.com/job/456")
-    assert db.count_postings() == 2
+    results = db.get_postings_with_scores()
+    assert len(results) == 2

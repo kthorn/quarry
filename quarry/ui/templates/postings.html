@@ -4,19 +4,7 @@
 <h1>Postings</h1>
 
 <div class="toolbar">
-  <div class="tabs">
-    {% for s in valid_statuses %}
-    <a
-      href="{{ url_for('ui.postings', status=s, interest=interest, q=q) }}"
-      class="{{ 'active' if s == status else '' }}"
-    >
-      {{ s.capitalize() }}
-      <span class="count">({{ counts[s] }})</span>
-    </a>
-    {% endfor %}
-  </div>
   <form method="POST" action="{{ url_for('ui.retrain') }}" class="inline retrain-form">
-    <input type="hidden" name="return_status" value="{{ status }}" />
     <input type="hidden" name="q" value="{{ q }}" />
     <input type="hidden" name="return_interest" value="{{ interest }}" />
     <button type="submit" class="small btn-retrain" {% if label_count < 5 %}disabled title="Need at least 5 interest labels to train"{% endif %}>
@@ -25,7 +13,6 @@
     <span class="label-count">{{ label_count }} interest label{{ 's' if label_count != 1 else '' }} since last train</span>
   </form>
   <form method="POST" action="{{ url_for('ui.scan') }}" class="inline scan-form">
-    <input type="hidden" name="return_status" value="{{ status }}" />
     <input type="hidden" name="q" value="{{ q }}" />
     <input type="hidden" name="return_interest" value="{{ interest }}" />
     <button type="submit" class="small btn-scan">Run Scan</button>
@@ -36,7 +23,7 @@
   <span class="filter-label">Interest:</span>
   {% for i in valid_interests %}
   <a
-    href="{{ url_for('ui.postings', status=status, interest=i, q=q) }}"
+    href="{{ url_for('ui.postings', interest=i, q=q) }}"
     class="interest-filter {{ 'active' if i == interest else '' }}"
   >
     {{ interest_labels[i] }}
@@ -45,11 +32,10 @@
 </div>
 
 <form method="GET" action="{{ url_for('ui.postings') }}" class="search-form">
-  <input type="hidden" name="status" value="{{ status }}" />
   <input type="hidden" name="interest" value="{{ interest }}" />
   <input type="text" name="q" value="{{ q }}" placeholder="Search title or description..." class="search-input" />
   {% if q %}
-  <a href="{{ url_for('ui.postings', status=status, interest=interest) }}" class="search-clear">Clear</a>
+  <a href="{{ url_for('ui.postings', interest=interest) }}" class="search-clear">Clear</a>
   {% endif %}
   <button type="submit" class="small">Search</button>
 </form>
@@ -64,11 +50,10 @@
     {{ row.company_name }} {% if row.location %} &middot; {{ row.location }}{% endif %} {% if row.work_model %}
     <span class="badge badge-{{ row.work_model }}">{{ row.work_model }}</span>
     {% endif %}
-    <span class="badge badge-{{ row.status }}">{{ row.status }}</span>
-    {% if row.interest_signal == "positive" %}
-    <span class="badge badge-positive">Interested</span>
-    {% elif row.interest_signal == "negative" %}
-    <span class="badge badge-negative">Not Interested</span>
+    {% if row.interest is not none %}
+    <span class="badge {{ 'badge-positive' if row.interest else 'badge-negative' }}">
+      {{ 'Interested' if row.interest else 'Not Interested' }}
+    </span>
     {% endif %}
     {% if row.role_tier %}
     <span class="badge badge-{{ row.role_tier }}">{{ row.role_tier }}</span>
@@ -94,55 +79,41 @@
   </details>
   {% endif %}
   <div class="card-actions">
-    <form
-      method="POST"
-      action="{{ url_for('ui.label', posting_id=row.id, return_status=status, q=q, return_interest=interest) }}"
-      class="inline"
-    >
-      <input type="hidden" name="signal" value="positive" />
-      <button type="submit" class="small btn-positive">
-        &#x1F44D; Interested
-      </button>
+    <form method="POST"
+      action="{{ url_for('ui.label', posting_id=row.id, return_interest=interest, q=q) }}"
+      class="inline">
+      <input type="hidden" name="interest" value="positive" />
+      <button type="submit" class="small btn-positive">&#x1F44D; Interested</button>
     </form>
-    <form
-      method="POST"
-      action="{{ url_for('ui.label', posting_id=row.id, return_status=status, q=q, return_interest=interest) }}"
-      class="inline"
-    >
-      <input type="hidden" name="signal" value="negative" />
-      <button type="submit" class="small btn-negative">
-        &#x1F44E; Not Interested
-      </button>
+    <form method="POST"
+      action="{{ url_for('ui.label', posting_id=row.id, return_interest=interest, q=q) }}"
+      class="inline">
+      <input type="hidden" name="interest" value="negative" />
+      <button type="submit" class="small btn-negative">&#x1F44E; Not Interested</button>
     </form>
-    <form
-      method="POST"
-      action="{{ url_for('ui.label', posting_id=row.id, return_status=status, q=q, return_interest=interest) }}"
-      class="inline"
-    >
-      <input type="hidden" name="status" value="applied" />
+    {% if not row.applied %}
+    <form method="POST"
+      action="{{ url_for('ui.label', posting_id=row.id, return_interest=interest, q=q) }}"
+      class="inline">
+      <input type="hidden" name="applied" value="true" />
       <button type="submit" class="small btn-applied">Applied</button>
     </form>
-    <form
-      method="POST"
-      action="{{ url_for('ui.label', posting_id=row.id, return_status=status, q=q, return_interest=interest) }}"
-      class="inline"
-    >
-      <input type="hidden" name="status" value="archived" />
-      <button type="submit" class="small btn-archive">Archive</button>
-    </form>
+    {% else %}
+    <span class="badge badge-applied">Applied ✓</span>
+    {% endif %}
   </div>
 </div>
 {% endfor %}
 
 <div class="pagination">
   {% if page > 1 %}
-  <a href="{{ url_for('ui.postings', status=status, interest=interest, page=page-1, q=q) }}"
+  <a href="{{ url_for('ui.postings', interest=interest, page=page-1, q=q) }}"
     >&laquo; Prev</a
   >
   {% endif %}
   <span class="current">Page {{ page }}</span>
   {% if has_next %}
-  <a href="{{ url_for('ui.postings', status=status, interest=interest, page=page+1, q=q) }}"
+  <a href="{{ url_for('ui.postings', interest=interest, page=page+1, q=q) }}"
     >Next &raquo;</a
   >
   {% endif %}
@@ -150,6 +121,6 @@
 {% elif q %}
 <p>No postings match &ldquo;{{ q }}&rdquo;.</p>
 {% else %}
-<p>No postings with status &ldquo;{{ status }}&rdquo; found.</p>
+<p>No postings found.</p>
 {% endif %}
 {% endblock %}

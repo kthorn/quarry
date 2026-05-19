@@ -27,8 +27,6 @@ from quarry.store.models import (
     User,
     UserClassifierScore,
     UserEnrichedPosting,
-    UserLabel,
-    UserPostingStatus,
     UserSearchQuery,
     UserSetting,
     UserSimilarityScore,
@@ -69,15 +67,13 @@ def test_all_models_importable():
         SystemSetting,
         User,
         UserWatchlistItem,
-        UserPostingStatus,
-        UserLabel,
         UserSearchQuery,
         UserSimilarityScore,
         UserClassifierScore,
         UserEnrichedPosting,
         UserSetting,
     ]
-    assert len(models) == 17, f"Expected 17 models, got {len(models)}"
+    assert len(models) == 15, f"Expected 15 models, got {len(models)}"
     for model in models:
         assert issubclass(model, Base), f"{model.__name__} not a Base subclass"
 
@@ -140,78 +136,6 @@ def test_cascade_delete_company_removes_postings(seeded):
     with session_scope(engine=seeded) as session:
         result = session.get(JobPosting, posting_id)
         assert result is None
-
-
-def test_per_user_label_isolation(seeded):
-    """UserLabel queries are isolated by user_id."""
-    posting_id = None
-    with session_scope(engine=seeded) as session:
-        session.add(User(id=2, email="user2@test.com"))
-        posting = JobPosting(
-            company_id=1, title="SWE", title_hash="xyz", url="http://x.com"
-        )
-        session.add(posting)
-        session.flush()
-        posting_id = posting.id
-
-        session.add(UserLabel(user_id=1, posting_id=posting_id, signal="positive"))
-        session.add(UserLabel(user_id=2, posting_id=posting_id, signal="negative"))
-        session.commit()
-
-    with session_scope(engine=seeded) as session:
-        u1_labels = session.execute(
-            select(UserLabel.signal).where(
-                UserLabel.user_id == 1,
-                UserLabel.posting_id == posting_id,
-            )
-        ).all()
-        assert len(u1_labels) == 1
-        assert u1_labels[0][0] == "positive"
-
-    with session_scope(engine=seeded) as session:
-        u2_labels = session.execute(
-            select(UserLabel.signal).where(
-                UserLabel.user_id == 2,
-                UserLabel.posting_id == posting_id,
-            )
-        ).all()
-        assert len(u2_labels) == 1
-        assert u2_labels[0][0] == "negative"
-
-
-def test_check_constraint_user_labels_signal(seeded):
-    """Invalid signal raises IntegrityError."""
-    with session_scope(engine=seeded) as session:
-        posting = JobPosting(
-            company_id=1, title="SWE", title_hash="abc", url="http://x.com"
-        )
-        session.add(posting)
-        session.flush()
-
-        with pytest.raises(IntegrityError):
-            session.add(
-                UserLabel(user_id=1, posting_id=posting.id, signal="invalid_signal")
-            )
-            session.flush()
-        session.rollback()
-
-
-def test_unique_constraint_user_labels(seeded):
-    """Duplicate (user_id, posting_id, signal) raises IntegrityError."""
-    with session_scope(engine=seeded) as session:
-        posting = JobPosting(
-            company_id=1, title="SWE", title_hash="abc", url="http://x.com"
-        )
-        session.add(posting)
-        session.flush()
-
-        session.add(UserLabel(user_id=1, posting_id=posting.id, signal="positive"))
-        session.flush()
-
-        with pytest.raises(IntegrityError):
-            session.add(UserLabel(user_id=1, posting_id=posting.id, signal="positive"))
-            session.flush()
-        session.rollback()
 
 
 def test_default_user_seeded_by_init_db(tmp_path):
@@ -282,41 +206,56 @@ def test_unique_constraint_user_watchlist(seeded):
         session.rollback()
 
 
-def test_check_constraint_user_posting_status(seeded):
-    """Invalid status raises IntegrityError."""
+def test_user_posting_state_crud(seeded):
+    """UserPostingState: create, read, update interest/applied."""
+    from quarry.store.models import JobPosting, UserPostingState
+
+    # Create a posting first
     with session_scope(engine=seeded) as session:
         posting = JobPosting(
-            company_id=1, title="SWE", title_hash="ghi", url="http://x.com"
+            company_id=1, title="SWE", title_hash="ups1", url="http://x.com"
         )
         session.add(posting)
         session.flush()
+        posting_id = posting.id
 
-        with pytest.raises(IntegrityError):
-            session.add(
-                UserPostingStatus(
-                    user_id=1, posting_id=posting.id, status="invalid_status"
-                )
-            )
-            session.flush()
-        session.rollback()
+        # Initially no state row exists
+        state = session.get(UserPostingState, (1, posting_id))
+        assert state is None
 
-
-def test_unique_constraint_user_posting_status(seeded):
-    """Duplicate (user_id, posting_id) raises IntegrityError."""
-    with session_scope(engine=seeded) as session:
-        posting = JobPosting(
-            company_id=1, title="SWE", title_hash="jkl", url="http://x.com"
+        # Set interest=True
+        state = UserPostingState(
+            user_id=1, posting_id=posting_id, interest=True, applied=False
         )
-        session.add(posting)
-        session.flush()
+        session.add(state)
 
-        session.add(UserPostingStatus(user_id=1, posting_id=posting.id))
-        session.flush()
+    # Read back
+    with session_scope(engine=seeded) as session:
+        state = session.get(UserPostingState, (1, posting_id))
+        assert state.interest is True
+        assert state.applied is False
 
-        with pytest.raises(IntegrityError):
-            session.add(UserPostingStatus(user_id=1, posting_id=posting.id))
-            session.flush()
-        session.rollback()
+        # Setting interest=False replaces interest
+        state.interest = False
+
+    with session_scope(engine=seeded) as session:
+        state = session.get(UserPostingState, (1, posting_id))
+        assert state.interest is False
+
+        # Can also set applied
+        state.applied = True
+
+    with session_scope(engine=seeded) as session:
+        state = session.get(UserPostingState, (1, posting_id))
+        assert state.applied is True
+        assert state.interest is False
+
+        # Setting interest=None is allowed
+        state.interest = None
+
+    with session_scope(engine=seeded) as session:
+        state = session.get(UserPostingState, (1, posting_id))
+        assert state.interest is None
 
 
 def test_engine_singleton_caching(tmp_path):

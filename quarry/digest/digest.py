@@ -96,10 +96,7 @@ def write_digest(entries: list[dict], output_path: str | None = None) -> str:
 def mark_digest_seen(db: Database, entries: list[dict]) -> None:
     """Mark all digest entries as seen in the database.
 
-    Args:
-        db: Database instance.
-        entries: List of posting dicts from build_digest.
+    Note: "seen" tracking was removed in the user_posting_state unification.
     """
     posting_ids = [e["id"] for e in entries]
-    db.mark_postings_seen(posting_ids)
-    log.info("Marked %d postings as seen", len(posting_ids))
+    log.info("Digest included %d postings", len(posting_ids))

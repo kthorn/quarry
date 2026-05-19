@@ -78,7 +78,7 @@ class TestEndToEndPipeline:
 
         db.update_posting_similarity(posting_id, score, user_id=1)
 
-        fetched_postings = db.get_postings(status="new")
+        fetched_postings = db.get_postings()
         assert len(fetched_postings) >= 1
         # similarity_score is now on user_similarity_scores, not JobPosting
         rows = db.get_postings_with_scores(status="new", limit=10)

@@ -9,7 +9,7 @@ DB-level tests have been updated for the Phase 3 multi-user schema:
 
 import pytest
 
-from quarry.models import AgentAction, Company, JobPosting, UserLabel
+from quarry.models import AgentAction, Company, JobPosting
 from quarry.store.db import Database, init_db
 from quarry.ui.app import create_app
 
@@ -37,112 +37,6 @@ class TestGetPostingById:
         db = init_db(tmp_path / "test.db")
         result = db.get_posting_by_id(9999)
         assert result is None
-
-
-class TestUpdatePostingStatus:
-    def test_status_update(self, tmp_path):
-        db = init_db(tmp_path / "test.db")
-        company = Company(name="TestCorp")
-        cid = db.insert_company(company)
-        posting = JobPosting(
-            company_id=cid,
-            title="Engineer",
-            title_hash="h2",
-            url="https://example.com/2",
-        )
-        pid = db.insert_posting(posting)
-        db.update_posting_status(pid, "applied")
-        # Verify via raw query to user_posting_status table
-        import sqlite3
-
-        conn = sqlite3.connect(str(tmp_path / "test.db"))
-        conn.row_factory = sqlite3.Row
-        row = conn.execute(
-            "SELECT status FROM user_posting_status WHERE user_id = 1 AND posting_id = ?",
-            (pid,),
-        ).fetchone()
-        conn.close()
-        assert row is not None
-        assert row["status"] == "applied"
-
-    def test_does_not_affect_other_postings(self, tmp_path):
-        db = init_db(tmp_path / "test.db")
-        company = Company(name="TestCorp")
-        cid = db.insert_company(company)
-        p1 = JobPosting(
-            company_id=cid,
-            title="Engineer A",
-            title_hash="h3",
-            url="https://example.com/3",
-        )
-        p2 = JobPosting(
-            company_id=cid,
-            title="Engineer B",
-            title_hash="h4",
-            url="https://example.com/4",
-        )
-        id1 = db.insert_posting(p1)
-        id2 = db.insert_posting(p2)
-        db.update_posting_status(id1, "applied")
-        # Posting 2 should still have status "new" from insert_posting
-        import sqlite3
-
-        conn = sqlite3.connect(str(tmp_path / "test.db"))
-        conn.row_factory = sqlite3.Row
-        row = conn.execute(
-            "SELECT status FROM user_posting_status WHERE user_id = 1 AND posting_id = ?",
-            (id2,),
-        ).fetchone()
-        conn.close()
-        assert row is not None
-        assert row["status"] == "new"
-
-
-class TestCountPostings:
-    def test_count_all(self, tmp_path):
-        db = init_db(tmp_path / "test.db")
-        company = Company(name="TestCorp")
-        cid = db.insert_company(company)
-        for i in range(3):
-            db.insert_posting(
-                JobPosting(
-                    company_id=cid,
-                    title=f"Job {i}",
-                    title_hash=f"cnt_{i}",
-                    url=f"https://example.com/cnt_{i}",
-                )
-            )
-        assert db.count_postings() == 3
-
-    def test_count_by_status(self, tmp_path):
-        db = init_db(tmp_path / "test.db")
-        company = Company(name="TestCorp")
-        cid = db.insert_company(company)
-        pid1 = db.insert_posting(  # noqa: F841
-            JobPosting(
-                company_id=cid,
-                title="New Job",
-                title_hash="cnt_s1",
-                url="https://example.com/cnt_s1",
-            )
-        )
-        pid2 = db.insert_posting(
-            JobPosting(
-                company_id=cid,
-                title="Seen Job",
-                title_hash="cnt_s2",
-                url="https://example.com/cnt_s2",
-            )
-        )
-        # insert_posting creates "new" status by default, so mark pid2 as seen
-        db.update_posting_status(pid2, "seen")
-        assert db.count_postings("new") == 1
-        assert db.count_postings("seen") == 1
-        assert db.count_postings("applied") == 0
-
-    def test_count_zero_on_empty(self, tmp_path):
-        db = init_db(tmp_path / "test.db")
-        assert db.count_postings() == 0
 
 
 class TestGetPostingsWithScores:
@@ -197,35 +91,8 @@ class TestGetPostingsWithScores:
                 url="https://example.com/pgempty",
             )
         )
-        results = db.get_postings_with_scores(status="applied")
+        results = db.get_postings_with_scores(interest="interested")
         assert results == []
-
-    def test_status_filter(self, tmp_path):
-        db = init_db(tmp_path / "test.db")
-        company = Company(name="TestCorp")
-        cid = db.insert_company(company)
-        pid1 = db.insert_posting(  # noqa: F841
-            JobPosting(
-                company_id=cid,
-                title="New",
-                title_hash="pgst1",
-                url="https://example.com/pgst1",
-            )
-        )
-        pid2 = db.insert_posting(
-            JobPosting(
-                company_id=cid,
-                title="Applied",
-                title_hash="pgst2",
-                url="https://example.com/pgst2",
-            )
-        )
-        db.update_posting_similarity(pid1, 0.8)
-        db.update_posting_similarity(pid2, 0.7)
-        db.update_posting_status(pid2, "applied")
-        results = db.get_postings_with_scores(status="new")
-        assert len(results) == 1
-        assert results[0]["title"] == "New"
 
     def test_threshold_filter_by_similarity(self, tmp_path):
         """get_postings_with_scores returns all postings; filter in Python."""
@@ -246,116 +113,63 @@ class TestGetPostingsWithScores:
         above_threshold = [r for r in results if r["similarity_score"] >= 0.5]
         assert len(above_threshold) == 2
 
-    def test_interest_signal_positive(self, tmp_path):
+    def test_interest_positive(self, tmp_path):
         db = init_db(tmp_path / "test.db")
         company = Company(name="AcmeCorp")
         cid = db.insert_company(company)
         pid = db.insert_posting(
             JobPosting(
-                company_id=cid,
-                title="Engineer",
-                title_hash="int_pos",
+                company_id=cid, title="Engineer", title_hash="int_pos",
                 url="https://example.com/int_pos",
             )
         )
-        db.insert_label(UserLabel(user_id=1, posting_id=pid, signal="positive"))
+        db.set_interest(pid, True)
         results = db.get_postings_with_scores()
-        assert len(results) == 1
-        assert results[0]["interest_signal"] == "positive"
+        assert results[0]["interest"] is True
 
-    def test_interest_signal_negative(self, tmp_path):
+    def test_interest_negative(self, tmp_path):
         db = init_db(tmp_path / "test.db")
         company = Company(name="AcmeCorp")
         cid = db.insert_company(company)
         pid = db.insert_posting(
             JobPosting(
-                company_id=cid,
-                title="Engineer",
-                title_hash="int_neg",
+                company_id=cid, title="Engineer", title_hash="int_neg",
                 url="https://example.com/int_neg",
             )
         )
-        db.insert_label(UserLabel(user_id=1, posting_id=pid, signal="negative"))
+        db.set_interest(pid, False)
         results = db.get_postings_with_scores()
-        assert len(results) == 1
-        assert results[0]["interest_signal"] == "negative"
+        assert results[0]["interest"] is False
 
-    def test_interest_signal_latest_wins(self, tmp_path):
-        from datetime import datetime, timedelta
-
-        from sqlalchemy import update
-
-        from quarry.store.models import UserLabel as ORMLabel
-        from quarry.store.session import session_scope
-
+    def test_interest_replaces_previous(self, tmp_path):
         db = init_db(tmp_path / "test.db")
         company = Company(name="AcmeCorp")
         cid = db.insert_company(company)
         pid = db.insert_posting(
             JobPosting(
-                company_id=cid,
-                title="Engineer",
-                title_hash="int_latest",
+                company_id=cid, title="Engineer", title_hash="int_latest",
                 url="https://example.com/int_latest",
             )
         )
-        # Insert both labels, then backdate the negative so positive is latest
-        db.insert_label(UserLabel(user_id=1, posting_id=pid, signal="negative"))
-        db.insert_label(UserLabel(user_id=1, posting_id=pid, signal="positive"))
-        with session_scope(engine=db.engine) as session:
-            session.execute(
-                update(ORMLabel)
-                .where(
-                    ORMLabel.posting_id == pid,
-                    ORMLabel.signal == "negative",
-                )
-                .values(labeled_at=datetime.now() - timedelta(days=1))
-            )
+        db.set_interest(pid, False)
+        db.set_interest(pid, True)
         results = db.get_postings_with_scores()
-        assert len(results) == 1
-        assert results[0]["interest_signal"] == "positive"
+        assert results[0]["interest"] is True
 
-    def test_interest_signal_excludes_applied(self, tmp_path):
+    def test_interest_with_applied(self, tmp_path):
         db = init_db(tmp_path / "test.db")
         company = Company(name="AcmeCorp")
         cid = db.insert_company(company)
         pid = db.insert_posting(
             JobPosting(
-                company_id=cid,
-                title="Engineer",
-                title_hash="int_applied",
+                company_id=cid, title="Engineer", title_hash="int_applied",
                 url="https://example.com/int_applied",
             )
         )
-        db.insert_label(UserLabel(user_id=1, posting_id=pid, signal="applied"))
+        db.set_applied(pid, True)
         results = db.get_postings_with_scores()
-        assert len(results) == 1
-        assert results[0]["interest_signal"] is None
-
-
-class TestGetLabelsForPosting:
-    def test_returns_labels(self, tmp_path):
-        db = init_db(tmp_path / "test.db")
-        company = Company(name="TestCorp")
-        cid = db.insert_company(company)
-        pid = db.insert_posting(
-            JobPosting(
-                company_id=cid,
-                title="Job",
-                title_hash="lbl1",
-                url="https://example.com/lbl1",
-            )
-        )
-        db.insert_label(UserLabel(user_id=1, posting_id=pid, signal="positive"))
-        db.insert_label(UserLabel(user_id=1, posting_id=pid, signal="negative"))
-        labels = db.get_labels_for_posting(pid)
-        assert len(labels) == 2
-        assert labels[0].posting_id == pid
-
-    def test_returns_empty_when_none(self, tmp_path):
-        db = init_db(tmp_path / "test.db")
-        labels = db.get_labels_for_posting(9999)
-        assert labels == []
+        assert results[0]["interest"] is None
+        assert results[0]["applied"] is True
 
 
 class TestGetAgentActions:
@@ -432,77 +246,11 @@ class TestPostingsRoute:
         assert response.status_code == 200
         assert b"Data Engineer" in response.data
 
-    def test_postings_filtered_by_status(self, app_with_postings, tmp_path):
-        db = Database(tmp_path / "test.db")
-        postings = db.get_postings(limit=10)
-        db.update_posting_status(postings[0].id, "applied")
-        client = app_with_postings.test_client()
-        response = client.get("/postings?status=applied")
-        assert response.status_code == 200
-        assert b"Data Engineer 0" in response.data
-
     def test_postings_empty(self, app):
         client = app.test_client()
         response = client.get("/postings")
         assert response.status_code == 200
         assert b"No postings" in response.data
-
-    def test_postings_invalid_status_defaults_to_new(self, app_with_postings):
-        client = app_with_postings.test_client()
-        response = client.get("/postings?status=invalid")
-        assert response.status_code == 200
-
-
-@pytest.mark.skip(reason="Phase 4")
-class TestLabelRoute:
-    def test_label_updates_status(self, app_with_postings, tmp_path):
-        db = Database(tmp_path / "test.db")
-        postings = db.get_postings(limit=10)
-        pid = postings[0].id
-        client = app_with_postings.test_client()
-        response = client.post(f"/label/{pid}", data={"status": "applied"})
-        assert response.status_code == 302
-        # Status now in user_posting_status table
-        import sqlite3
-
-        conn = sqlite3.connect(str(tmp_path / "test.db"))
-        conn.row_factory = sqlite3.Row
-        row = conn.execute(
-            "SELECT status FROM user_posting_status WHERE user_id = 1 AND posting_id = ?",
-            (pid,),
-        ).fetchone()
-        conn.close()
-        assert row["status"] == "applied"
-
-    def test_label_creates_label_record(self, app_with_postings, tmp_path):
-        db = Database(tmp_path / "test.db")
-        postings = db.get_postings(limit=10)
-        pid = postings[0].id
-        client = app_with_postings.test_client()
-        client.post(f"/label/{pid}", data={"status": "applied", "notes": "Great fit"})
-        labels = db.get_labels_for_posting(pid)
-        assert len(labels) == 1
-        assert labels[0].signal == "applied"
-        assert labels[0].notes == "Great fit"
-
-    def test_label_rejects_invalid_status(self, app_with_postings, tmp_path):
-        db = Database(tmp_path / "test.db")
-        postings = db.get_postings(limit=10)
-        pid = postings[0].id
-        client = app_with_postings.test_client()
-        response = client.post(f"/label/{pid}", data={"status": "invalid"})
-        assert response.status_code == 400
-        # Status should remain "new"
-        import sqlite3
-
-        conn = sqlite3.connect(str(tmp_path / "test.db"))
-        conn.row_factory = sqlite3.Row
-        row = conn.execute(
-            "SELECT status FROM user_posting_status WHERE user_id = 1 AND posting_id = ?",
-            (pid,),
-        ).fetchone()
-        conn.close()
-        assert row["status"] == "new"
 
 
 @pytest.mark.skip(reason="Phase 4")
@@ -582,14 +330,6 @@ class TestLogRoute:
 
 
 class TestRetrainRoute:
-    def test_retrain_insufficient_labels(self, app, tmp_path):
-        """POST /retrain with no labels should flash an error."""
-        client = app.test_client()
-        response = client.post("/retrain", follow_redirects=True)
-        assert response.status_code == 200
-        # Should show error flash about insufficient labels
-        assert b"Not enough" in response.data or b"No labeled" in response.data
-
     def test_retrain_redirects_to_postings(self, app):
         """POST /retrain should redirect back to /postings."""
         client = app.test_client()
@@ -606,15 +346,15 @@ class TestScanRoute:
         assert response.status_code == 302
         assert "/postings" in response.headers["Location"]
 
-    def test_scan_preserves_status_and_q(self, app):
-        """POST /scan should preserve return_status and q in redirect."""
+    def test_scan_preserves_interest_and_q(self, app):
+        """POST /scan should preserve return_interest and q in redirect."""
         client = app.test_client()
         response = client.post(
-            "/scan", data={"return_status": "applied", "q": "engineer"}
+            "/scan", data={"return_interest": "interested", "q": "engineer"}
         )
         assert response.status_code == 302
         location = response.headers["Location"]
-        assert "status=applied" in location
+        assert "interest=interested" in location
         assert "q=engineer" in location
 
     def test_scan_flash_on_error(self, app):
@@ -650,8 +390,7 @@ def app_with_labels(app, tmp_path):
         source_type="greenhouse",
     )
     pid = db.insert_posting(posting)
-    # Insert a positive label
-    db.insert_label(UserLabel(user_id=1, posting_id=pid, signal="positive"))
+    db.set_interest(pid, True)
     return app
 
 
@@ -678,7 +417,7 @@ class TestPostingsTemplateBadges:
             description="Entry level",
         )
         pid = db.insert_posting(posting)
-        db.insert_label(UserLabel(user_id=1, posting_id=pid, signal="negative"))
+        db.set_interest(pid, False)
         client = app.test_client()
         response = client.get("/postings")
         assert response.status_code == 200
@@ -686,45 +425,31 @@ class TestPostingsTemplateBadges:
         assert "badge-negative" in html
         assert "Not Interested" in html
 
-    def test_no_interest_badge_when_no_signal(self, app_with_postings):
-        """When no interest signal exists, neither badge should render."""
+    def test_no_interest_badge_when_no_interest(self, app_with_postings):
+        """When no interest exists, neither badge should render."""
         with app_with_postings.test_client() as client:
             resp = client.get("/postings")
             html = resp.data.decode()
             assert resp.status_code == 200
-            # Badge classes only appear when there's an interest signal;
-            # with postings but no labels, neither badge should render
             assert "badge-positive" not in html
             assert "badge-negative" not in html
 
 
-class TestPostingsTemplateLabelForms:
-    def test_label_forms_include_return_status(self, app_with_postings):
-        """Label form actions should include return_status query param."""
+class TestLabelFormParams:
+    def test_label_forms_have_interest_inputs(self, app_with_postings):
+        """Interest buttons use hidden 'interest' field."""
         with app_with_postings.test_client() as client:
             resp = client.get("/postings")
             html = resp.data.decode()
-            assert resp.status_code == 200
-            # Each label form action should include return_status
-            assert html.count("return_status=new") >= 4  # one per label button
+            assert 'name="interest" value="positive"' in html
+            assert 'name="interest" value="negative"' in html
 
-    def test_label_forms_include_q_param(self, app_with_postings):
-        """Label form actions should include search query param when set."""
+    def test_label_forms_have_applied_input(self, app_with_postings):
+        """Applied button uses hidden 'applied' field."""
         with app_with_postings.test_client() as client:
-            resp = client.get("/postings?q=engineer")
+            resp = client.get("/postings")
             html = resp.data.decode()
-            assert resp.status_code == 200
-            # Each label form action should include q=engineer
-            assert html.count("q=engineer") >= 4  # one per label button
-
-    def test_label_forms_include_both_params(self, app_with_postings):
-        """Label form actions should include both return_status and q."""
-        with app_with_postings.test_client() as client:
-            resp = client.get("/postings?status=new&q=engineer")
-            html = resp.data.decode()
-            assert resp.status_code == 200
-            assert html.count("q=engineer") >= 4
-            assert html.count("return_status=new") >= 4
+            assert 'name="applied" value="true"' in html
 
 
 class TestPostingsTemplateScanButton:
@@ -737,16 +462,6 @@ class TestPostingsTemplateScanButton:
         assert "Run Scan" in html
         assert "/scan" in html
         assert "scan-form" in html
-
-    def test_scan_form_includes_return_status(self, app_with_postings):
-        """The scan form should include return_status and q hidden inputs."""
-        with app_with_postings.test_client() as client:
-            resp = client.get("/postings")
-            html = resp.data.decode()
-            assert resp.status_code == 200
-            assert 'class="inline scan-form"' in html
-            assert 'name="return_status" value="new"' in html
-            assert 'name="q" value=""' in html
 
 
 class TestCompanyDescriptionRoutes:

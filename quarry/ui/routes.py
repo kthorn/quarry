@@ -1,6 +1,5 @@
 import logging
 import threading
-from typing import Literal
 
 from flask import (
     Blueprint,
@@ -12,7 +11,7 @@ from flask import (
     url_for,
 )
 
-from quarry.models import UserLabel, UserWatchlistItem
+from quarry.models import UserWatchlistItem
 from quarry.settings_service import UserSettingsService
 from quarry.store.db import Database
 
@@ -22,7 +21,6 @@ bp = Blueprint("ui", __name__, template_folder="templates")
 
 USER_ID = 1  # Single-user mode until auth is added
 
-VALID_STATUSES = ["new", "seen", "applied", "rejected", "archived"]
 VALID_INTERESTS = ["all", "interested", "untagged", "not_interested"]
 INTEREST_LABELS = {
     "all": "All",
@@ -30,13 +28,6 @@ INTEREST_LABELS = {
     "untagged": "Untagged",
     "not_interested": "Not Interested",
 }
-STATUS_TO_SIGNAL = {
-    "applied": "applied",
-    "rejected": "negative",
-    "seen": "negative",
-    "archived": "skip",
-}
-
 
 def get_db() -> Database:
     return current_app.config["DB"]
@@ -49,9 +40,6 @@ def index():
 
 @bp.route("/postings")
 def postings():
-    status = request.args.get("status", "new")
-    if status not in VALID_STATUSES:
-        status = "new"
     interest = request.args.get("interest", "all")
     if interest not in VALID_INTERESTS:
         interest = "all"
@@ -66,7 +54,6 @@ def postings():
 
     results = db.get_postings_with_scores(
         user_id=USER_ID,
-        status=status,
         limit=per_page + 1,
         offset=offset,
         search=q if q else None,
@@ -75,24 +62,14 @@ def postings():
     has_next = len(results) > per_page
     results = results[:per_page]
 
-    counts = {
-        s: db.count_postings_by_watchlist(
-            user_id=USER_ID, status=s, interest=interest if interest != "all" else None
-        )
-        for s in VALID_STATUSES
-    }
-
     label_count = int(db.get_user_setting(USER_ID, "labels_since_last_train") or "0")
 
     return render_template(
         "postings.html",
         results=results,
-        status=status,
         interest=interest,
         page=page,
         has_next=has_next,
-        counts=counts,
-        valid_statuses=VALID_STATUSES,
         valid_interests=VALID_INTERESTS,
         interest_labels=INTEREST_LABELS,
         q=q,
@@ -107,47 +84,24 @@ def label(posting_id):
     if posting is None:
         return "Posting not found", 404
 
-    status = request.form.get("status", "")
-    signal = request.form.get("signal", "")
+    interest_field = request.form.get("interest", "")
+    applied_field = request.form.get("applied", "")
 
-    # Handle status change (existing behavior)
-    if status and status in VALID_STATUSES:
-        db.update_posting_status(posting_id, status, user_id=USER_ID)
-        # Auto-derive signal from status for backward compat
-        notes = request.form.get("notes", "").strip()
-        derived_signal: Literal["applied", "negative", "skip"] = STATUS_TO_SIGNAL.get(
-            status, "skip"
-        )  # type: ignore[assignment]
-        label = UserLabel(
-            user_id=USER_ID,
-            posting_id=posting_id,
-            signal=derived_signal,
-            notes=notes or None,
-            label_source="user",
-        )
-        db.insert_label(label, user_id=USER_ID)
-    elif signal in ("positive", "negative"):
-        # Interest-only label (no status change)
-        signal_typed: Literal["positive", "negative"] = signal  # type: ignore[assignment]
-        label = UserLabel(
-            user_id=USER_ID,
-            posting_id=posting_id,
-            signal=signal_typed,
-            label_source="user",
-        )
-        db.insert_label(label, user_id=USER_ID)
-    else:
-        return "Invalid status or signal", 400
+    if interest_field == "positive":
+        db.set_interest(posting_id, True, user_id=USER_ID)
+    elif interest_field == "negative":
+        db.set_interest(posting_id, False, user_id=USER_ID)
 
-    return_status = request.args.get("return_status", "new")
-    return_q = request.args.get("q", "")
+    if applied_field == "true":
+        db.set_applied(posting_id, True, user_id=USER_ID)
+
     return_interest = request.args.get("return_interest", "all")
+    return_q = request.args.get("q", "")
     return redirect(
         url_for(
             "ui.postings",
-            status=return_status,
-            q=return_q,
             interest=return_interest,
+            q=return_q,
         )
         + f"#posting-{posting_id}"
     )
@@ -158,7 +112,6 @@ def retrain():
     from quarry.rank.train import train_classifier
 
     db = get_db()
-    return_status = request.form.get("return_status", "new")
     return_q = request.form.get("q", "")
     return_interest = request.form.get("return_interest", "all")
 
@@ -175,7 +128,6 @@ def retrain():
     return redirect(
         url_for(
             "ui.postings",
-            status=return_status,
             q=return_q,
             interest=return_interest,
         )
@@ -187,7 +139,6 @@ def scan():
     from quarry.agent.scheduler import run_once
 
     db = get_db()
-    return_status = request.form.get("return_status", "new")
     return_q = request.form.get("q", "")
     return_interest = request.form.get("return_interest", "all")
 
@@ -207,7 +158,6 @@ def scan():
     return redirect(
         url_for(
             "ui.postings",
-            status=return_status,
             q=return_q,
             interest=return_interest,
         )

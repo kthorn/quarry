@@ -79,7 +79,7 @@ class ClassifierScorer(Scorer):
         """Train logistic regression on labeled postings.
 
         Args:
-            labels: List of signal strings ('positive' or 'negative').
+            labels: List of booleans (True=interested, False=not interested).
             postings: List of objects with .embedding attribute.
 
         Returns:
@@ -111,7 +111,7 @@ class ClassifierScorer(Scorer):
                 log.warning("Skipping posting %d: bad embedding: %s", posting.id, e)
                 continue
             x_list.append(emb)
-            y_list.append(1 if label == "positive" else 0)
+            y_list.append(1 if label else 0)
 
         if len(y_list) < self.min_training_labels:
             log.warning(

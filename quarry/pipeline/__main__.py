@@ -52,8 +52,7 @@ def embed_ideal():
 )
 @click.option("--limit", default=20, help="Maximum number of results.")
 @click.option("--min-score", default=0.0, type=float, help="Minimum similarity score.")
-@click.option("--status", default=None, help="Filter by posting status.")
-def search(ideal, must_have_title, must_have_description, limit, min_score, status):
+def search(ideal, must_have_title, must_have_description, limit, min_score):
     """Search and rank jobs by keywords and/or embedding similarity.
 
     At least one of --ideal, --must-have-title, or --must-have-description is required.
@@ -72,7 +71,7 @@ def search(ideal, must_have_title, must_have_description, limit, min_score, stat
         raise SystemExit(1)
 
     db = get_db()
-    postings = db.get_postings_for_search(status=status)
+    postings = db.get_postings_for_search()
 
     if not postings:
         click.echo("No postings with embeddings found in the database.")
