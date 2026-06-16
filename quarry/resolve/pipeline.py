@@ -180,4 +180,11 @@ def resolve_company_sync(
     single-user CLI/UI tool. If called frequently from a long-running server,
     refactor to use a shared client and event loop.
     """
-    return asyncio.run(resolve_company(company, db=db, client=client))
+
+    async def _resolve() -> Company:
+        try:
+            return await resolve_company(company, db=db, client=client)
+        finally:
+            await close_client()
+
+    return asyncio.run(_resolve())

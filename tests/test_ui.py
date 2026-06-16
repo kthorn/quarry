@@ -119,7 +119,9 @@ class TestGetPostingsWithScores:
         cid = db.insert_company(company)
         pid = db.insert_posting(
             JobPosting(
-                company_id=cid, title="Engineer", title_hash="int_pos",
+                company_id=cid,
+                title="Engineer",
+                title_hash="int_pos",
                 url="https://example.com/int_pos",
             )
         )
@@ -133,7 +135,9 @@ class TestGetPostingsWithScores:
         cid = db.insert_company(company)
         pid = db.insert_posting(
             JobPosting(
-                company_id=cid, title="Engineer", title_hash="int_neg",
+                company_id=cid,
+                title="Engineer",
+                title_hash="int_neg",
                 url="https://example.com/int_neg",
             )
         )
@@ -147,7 +151,9 @@ class TestGetPostingsWithScores:
         cid = db.insert_company(company)
         pid = db.insert_posting(
             JobPosting(
-                company_id=cid, title="Engineer", title_hash="int_latest",
+                company_id=cid,
+                title="Engineer",
+                title_hash="int_latest",
                 url="https://example.com/int_latest",
             )
         )
@@ -162,7 +168,9 @@ class TestGetPostingsWithScores:
         cid = db.insert_company(company)
         pid = db.insert_posting(
             JobPosting(
-                company_id=cid, title="Engineer", title_hash="int_applied",
+                company_id=cid,
+                title="Engineer",
+                title_hash="int_applied",
                 url="https://example.com/int_applied",
             )
         )

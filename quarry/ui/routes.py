@@ -29,6 +29,7 @@ INTEREST_LABELS = {
     "not_interested": "Not Interested",
 }
 
+
 def get_db() -> Database:
     return current_app.config["DB"]
 

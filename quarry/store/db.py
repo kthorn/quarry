@@ -321,8 +321,6 @@ class Database:
                 )
             return out
 
-
-
     # ── User Posting State methods ─────────────────────────────
 
     def set_interest(
@@ -712,8 +710,6 @@ class Database:
         Preserves empty string values.
         """
         return self.get_user_settings_raw(user_id).get(key)
-
-
 
     def get_postings_with_scores(
         self,

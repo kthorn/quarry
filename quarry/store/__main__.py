@@ -1,10 +1,9 @@
-import asyncio
-
 import click
 
 from quarry.config import settings
 from quarry.models import Company
 from quarry.resolve.ats_detector import detect_ats_url_patterns
+from quarry.resolve.pipeline import resolve_company_sync
 from quarry.store.db import init_db
 
 
@@ -86,17 +85,11 @@ def add_company(name: str, domain: str | None, careers_url: str | None) -> None:
         click.echo("Description generation failed (will retry later)")
 
     if company.resolve_status != "resolved" and not careers_url:
-        from quarry.resolve.pipeline import resolve_company
-
-        result = asyncio.run(resolve_company(company, db=db))
+        company = resolve_company_sync(company, db=db)
         click.echo(
-            f"Resolved: domain={result.domain}, careers_url={result.careers_url}, "
-            f"ats_type={result.ats_type}, status={result.resolve_status}"
+            f"Resolved: domain={company.domain}, careers_url={company.careers_url}, "
+            f"ats_type={company.ats_type}, status={company.resolve_status}"
         )
-
-    from quarry.http import close_client
-
-    asyncio.run(close_client())
 
 
 if __name__ == "__main__":
