@@ -2,6 +2,10 @@
 
 Last updated: 2026-05-17 (hermetic test fixes: settings UI, scheduler, and M4 integration tests no longer load real sentence-transformers model)
 
+## In Progress
+
+- **Interactive title/body filters**: design spec at `docs/superpowers/specs/2026-06-16-interactive-title-body-filters-design.md`.
+
 ## Recent Updates
 
 - **Classifier error message improvement**: `quarry/rank/train.py` now reports the exact positive/negative label distribution when training fails due to class imbalance (e.g., "Found 1 interested and 23 not-interested labels..." instead of the generic "at least 5" message).
