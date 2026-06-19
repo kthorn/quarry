@@ -1,12 +1,14 @@
 # STATUS
 
-Last updated: 2026-05-17 (hermetic test fixes: settings UI, scheduler, and M4 integration tests no longer load real sentence-transformers model)
+Last updated: 2026-06-19 (interactive title/body filters on postings page)
 
 ## In Progress
 
-- **Interactive title/body filters**: design spec at `docs/superpowers/specs/2026-06-16-interactive-title-body-filters-design.md`.
+_(none)_
 
 ## Recent Updates
+
+- **Interactive title/body filters** (2026-06-19): replaced the single combined `q` search box on `/postings` with separate **Title contains** and **Description contains** text inputs that update the list live via HTMX (`keyup changed delay:300ms`). `get_postings_with_scores()` gained `title_search` / `body_search` params (ANDed; legacy `search` OR kept for backward compat). New `postings_results.html` partial rendered for `HX-Request: true` requests; full page otherwise. HTMX 1.9.12 (SRI-pinned) added to `base.html`. All label/retrain/scan/pagination links preserve both filters. Design spec: `docs/superpowers/specs/2026-06-16-interactive-title-body-filters-design.md`. 555 tests passing.
 
 - **Classifier error message improvement**: `quarry/rank/train.py` now reports the exact positive/negative label distribution when training fails due to class imbalance (e.g., "Found 1 interested and 23 not-interested labels..." instead of the generic "at least 5" message).
 - **New tests**: `tests/test_rank_train.py` covers single-class, imbalanced, and balanced training scenarios.
@@ -94,7 +96,7 @@ All completed plans and design specs live in `docs/plans/completed/`:
 - `python -m pytest tests/test_orm.py -v` — **17 ORM tests passing** (Phase 2)
 - `ruff check .` — clean
 - `pyright quarry/` — clean
-- `python -m pytest tests/ -q` — **540 passed, 17 skipped** (0 failures)
+- `python -m pytest tests/ -q` — **555 passed, 17 skipped** (0 failures)
 - **Note:** All four phases complete. All callers use per-user ORM methods with `user_id=1`. `get_recent_postings`/`get_postings_paginated`/`db.execute()` removed. Backward-compat aliases removed from `models.py`.
 - **Ranking pipeline:** `python -m quarry.rank list-scorers` — shows 5 registered scorers
 - **Ranking CLI:** `python -m quarry.rank config get|set`, `python -m quarry.rank train`, `python -m quarry.rank evaluate`, `python -m quarry.rank recompute`

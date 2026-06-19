@@ -354,16 +354,22 @@ class TestScanRoute:
         assert response.status_code == 302
         assert "/postings" in response.headers["Location"]
 
-    def test_scan_preserves_interest_and_q(self, app):
-        """POST /scan should preserve return_interest and q in redirect."""
+    def test_scan_preserves_interest_and_filters(self, app):
+        """POST /scan should preserve return_interest and filters in redirect."""
         client = app.test_client()
         response = client.post(
-            "/scan", data={"return_interest": "interested", "q": "engineer"}
+            "/scan",
+            data={
+                "return_interest": "interested",
+                "title_q": "engineer",
+                "body_q": "python",
+            },
         )
         assert response.status_code == 302
         location = response.headers["Location"]
         assert "interest=interested" in location
-        assert "q=engineer" in location
+        assert "title_q=engineer" in location
+        assert "body_q=python" in location
 
     def test_scan_flash_on_error(self, app):
         """POST /scan should flash error when run_once fails."""
@@ -647,3 +653,69 @@ class TestCompaniesPageCards:
 
         # Em dash should not appear for missing fields
         assert "\u2014" not in html
+
+
+class TestPostingsTitleBodyFilters:
+    """Separate title/body search filters on the postings page."""
+
+    def test_title_filter_matches_title_only(self, app_with_postings):
+        client = app_with_postings.test_client()
+        response = client.get("/postings?title_q=Engineer")
+        assert response.status_code == 200
+        html = response.data.decode()
+        assert "Data Engineer 0" in html
+        assert "Title contains" in html
+        assert 'value="Engineer"' in html
+
+    def test_body_filter_matches_description_only(self, app_with_postings):
+        client = app_with_postings.test_client()
+        response = client.get("/postings?body_q=pipelines")
+        assert response.status_code == 200
+        html = response.data.decode()
+        assert "Data Engineer 0" in html
+        assert "Description contains" in html
+        assert 'value="pipelines"' in html
+
+    def test_title_and_body_filters_anded(self, app_with_postings):
+        client = app_with_postings.test_client()
+        response = client.get("/postings?title_q=Engineer&body_q=pipelines")
+        assert response.status_code == 200
+        html = response.data.decode()
+        assert "Data Engineer 0" in html
+
+    def test_title_and_body_filters_no_match(self, app_with_postings):
+        client = app_with_postings.test_client()
+        response = client.get("/postings?title_q=Engineer&body_q=machine+learning")
+        assert response.status_code == 200
+        html = response.data.decode()
+        assert "No postings match the current filters." in html
+
+    def test_hx_request_returns_partial(self, app_with_postings):
+        client = app_with_postings.test_client()
+        response = client.get(
+            "/postings?title_q=Engineer",
+            headers={"HX-Request": "true"},
+        )
+        assert response.status_code == 200
+        html = response.data.decode()
+        assert "Data Engineer 0" in html
+        # Partial should not include base layout chrome
+        assert "<nav>" not in html
+        assert "Title contains" not in html
+
+    def test_label_form_preserves_filters(self, app_with_postings):
+        client = app_with_postings.test_client()
+        response = client.get("/postings?title_q=Engineer&body_q=pipelines")
+        assert response.status_code == 200
+        html = response.data.decode()
+        assert "title_q=Engineer" in html
+        assert "body_q=pipelines" in html
+
+    def test_clear_filters_link(self, app_with_postings):
+        client = app_with_postings.test_client()
+        response = client.get("/postings?title_q=Engineer&body_q=pipelines")
+        assert response.status_code == 200
+        html = response.data.decode()
+        # Clear link should reset to interest-only URL
+        assert "/postings?interest=all" in html
+        assert "Clear filters" in html

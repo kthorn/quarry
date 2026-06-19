@@ -992,6 +992,140 @@ class TestGetPostingsWithScores:
         results = db.get_postings_with_scores(search=None)
         assert len(results) == 1
 
+    def test_title_search_filters_title_only(self, tmp_path):
+        """title_search matches only the title field."""
+        db = init_db(tmp_path / "test.db")
+        company = models.Company(name="TestCorp")
+        cid = db.insert_company(company)
+        db.insert_posting(
+            models.JobPosting(
+                company_id=cid,
+                title="Senior Engineer",
+                title_hash="ts1",
+                url="https://example.com/ts1",
+                description="Product management role",
+            )
+        )
+        db.insert_posting(
+            models.JobPosting(
+                company_id=cid,
+                title="Product Manager",
+                title_hash="ts2",
+                url="https://example.com/ts2",
+                description="Engineering management",
+            )
+        )
+        results = db.get_postings_with_scores(title_search="engineer")
+        assert len(results) == 1
+        assert results[0]["title"] == "Senior Engineer"
+
+    def test_body_search_filters_description_only(self, tmp_path):
+        """body_search matches only the description field."""
+        db = init_db(tmp_path / "test.db")
+        company = models.Company(name="TestCorp")
+        cid = db.insert_company(company)
+        db.insert_posting(
+            models.JobPosting(
+                company_id=cid,
+                title="Role A",
+                title_hash="bs1",
+                url="https://example.com/bs1",
+                description="Uses Python and Kubernetes",
+            )
+        )
+        db.insert_posting(
+            models.JobPosting(
+                company_id=cid,
+                title="Role B",
+                title_hash="bs2",
+                url="https://example.com/bs2",
+                description="Product roadmap planning",
+            )
+        )
+        results = db.get_postings_with_scores(body_search="kubernetes")
+        assert len(results) == 1
+        assert results[0]["title"] == "Role A"
+
+    def test_title_and_body_search_anded(self, tmp_path):
+        """title_search and body_search are combined with AND."""
+        db = init_db(tmp_path / "test.db")
+        company = models.Company(name="TestCorp")
+        cid = db.insert_company(company)
+        db.insert_posting(
+            models.JobPosting(
+                company_id=cid,
+                title="Senior Engineer",
+                title_hash="ab1",
+                url="https://example.com/ab1",
+                description="Python backend work",
+            )
+        )
+        db.insert_posting(
+            models.JobPosting(
+                company_id=cid,
+                title="Junior Engineer",
+                title_hash="ab2",
+                url="https://example.com/ab2",
+                description="Sales operations",
+            )
+        )
+        db.insert_posting(
+            models.JobPosting(
+                company_id=cid,
+                title="Senior Product Manager",
+                title_hash="ab3",
+                url="https://example.com/ab3",
+                description="Python analytics",
+            )
+        )
+        results = db.get_postings_with_scores(
+            title_search="engineer", body_search="python"
+        )
+        assert len(results) == 1
+        assert results[0]["title"] == "Senior Engineer"
+
+    def test_title_search_case_insensitive(self, tmp_path):
+        db = init_db(tmp_path / "test.db")
+        company = models.Company(name="TestCorp")
+        cid = db.insert_company(company)
+        db.insert_posting(
+            models.JobPosting(
+                company_id=cid,
+                title="SENIOR ENGINEER",
+                title_hash="ti1",
+                url="https://example.com/ti1",
+            )
+        )
+        results = db.get_postings_with_scores(title_search="engineer")
+        assert len(results) == 1
+
+    def test_body_search_special_characters_escaped(self, tmp_path):
+        """LIKE wildcards in body_search are escaped."""
+        db = init_db(tmp_path / "test.db")
+        company = models.Company(name="Acme Corp")
+        cid = db.insert_company(company)
+        db.insert_posting(
+            models.JobPosting(
+                company_id=cid,
+                title="Role A",
+                title_hash="bs3",
+                url="https://example.com/bs3",
+                description="100% Remote work",
+            )
+        )
+        db.insert_posting(
+            models.JobPosting(
+                company_id=cid,
+                title="Role B",
+                title_hash="bs4",
+                url="https://example.com/bs4",
+                description="Senior role",
+            )
+        )
+        results = db.get_postings_with_scores(body_search="100%")
+        assert len(results) == 1
+        assert results[0]["title"] == "Role A"
+
 
 # ── System methods ─────────────────────────────────────────────
 

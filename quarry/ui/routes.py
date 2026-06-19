@@ -47,7 +47,8 @@ def postings():
     page = request.args.get("page", 1, type=int)
     if page < 1:
         page = 1
-    q = request.args.get("q", "")
+    title_q = request.args.get("title_q", "")
+    body_q = request.args.get("body_q", "")
 
     db = get_db()
     per_page = current_app.config["PER_PAGE"]
@@ -57,7 +58,8 @@ def postings():
         user_id=USER_ID,
         limit=per_page + 1,
         offset=offset,
-        search=q if q else None,
+        title_search=title_q if title_q else None,
+        body_search=body_q if body_q else None,
         interest=interest if interest != "all" else None,
     )
     has_next = len(results) > per_page
@@ -65,15 +67,22 @@ def postings():
 
     label_count = int(db.get_user_setting(USER_ID, "labels_since_last_train") or "0")
 
+    template = (
+        "postings_results.html"
+        if request.headers.get("HX-Request") == "true"
+        else "postings.html"
+    )
+
     return render_template(
-        "postings.html",
+        template,
         results=results,
         interest=interest,
         page=page,
         has_next=has_next,
         valid_interests=VALID_INTERESTS,
         interest_labels=INTEREST_LABELS,
-        q=q,
+        title_q=title_q,
+        body_q=body_q,
         label_count=label_count,
     )
 
@@ -97,12 +106,14 @@ def label(posting_id):
         db.set_applied(posting_id, True, user_id=USER_ID)
 
     return_interest = request.args.get("return_interest", "all")
-    return_q = request.args.get("q", "")
+    return_title_q = request.args.get("title_q", "")
+    return_body_q = request.args.get("body_q", "")
     return redirect(
         url_for(
             "ui.postings",
             interest=return_interest,
-            q=return_q,
+            title_q=return_title_q,
+            body_q=return_body_q,
         )
         + f"#posting-{posting_id}"
     )
@@ -113,7 +124,8 @@ def retrain():
     from quarry.rank.train import train_classifier
 
     db = get_db()
-    return_q = request.form.get("q", "")
+    return_title_q = request.form.get("title_q", "")
+    return_body_q = request.form.get("body_q", "")
     return_interest = request.form.get("return_interest", "all")
 
     result = train_classifier(db=db, user_id=USER_ID, min_labels=5)
@@ -129,7 +141,8 @@ def retrain():
     return redirect(
         url_for(
             "ui.postings",
-            q=return_q,
+            title_q=return_title_q,
+            body_q=return_body_q,
             interest=return_interest,
         )
     )
@@ -140,7 +153,8 @@ def scan():
     from quarry.agent.scheduler import run_once
 
     db = get_db()
-    return_q = request.form.get("q", "")
+    return_title_q = request.form.get("title_q", "")
+    return_body_q = request.form.get("body_q", "")
     return_interest = request.form.get("return_interest", "all")
 
     try:
@@ -159,7 +173,8 @@ def scan():
     return redirect(
         url_for(
             "ui.postings",
-            q=return_q,
+            title_q=return_title_q,
+            body_q=return_body_q,
             interest=return_interest,
         )
     )
