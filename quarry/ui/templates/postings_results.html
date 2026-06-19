@@ -1,0 +1,83 @@
+{% if results %}
+{% for row in results %}
+<div class="card" id="posting-{{ row.id }}">
+  <div class="card-title">
+    <a href="{{ row.url }}">{{ row.title }}</a>
+  </div>
+  <div class="card-meta">
+    {{ row.company_name }} {% if row.location %} &middot; {{ row.location }}{% endif %} {% if row.work_model %}
+    <span class="badge badge-{{ row.work_model }}">{{ row.work_model }}</span>
+    {% endif %}
+    {% if row.interest is not none %}
+    <span class="badge {{ 'badge-positive' if row.interest else 'badge-negative' }}">
+      {{ 'Interested' if row.interest else 'Not Interested' }}
+    </span>
+    {% endif %}
+    {% if row.role_tier %}
+    <span class="badge badge-{{ row.role_tier }}">{{ row.role_tier }}</span>
+    {% endif %}
+  </div>
+  <div class="card-meta score-line">
+    {% if row.composite_score and row.composite_score > 0 %}
+    <span class="score">Score: {{ "%.3f"|format(row.composite_score) }} (composite)</span>
+    <span class="score-detail">classifier {{ "%.3f"|format(row.classifier_score or 0) }} &middot; similarity {{ "%.3f"|format(row.similarity_score or 0) }}{% if row.fit_score and row.fit_score != 0 %} &middot; fit {{ "+%d"|format(row.fit_score) if row.fit_score > 0 else row.fit_score }}{% endif %}</span>
+    {% elif row.similarity_score and row.similarity_score > 0 %}
+    <span class="score">similarity: {{ "%.3f"|format(row.similarity_score) }}</span>
+    {% else %}
+    <span class="score">no score</span>
+    {% endif %}
+    {% if row.fit_reason %}
+    <span class="fit-reason">{{ row.fit_reason }}</span>
+    {% endif %}
+  </div>
+  {% if row.description %}
+  <details>
+    <summary>Description</summary>
+    <div class="description">{{ row.description }}</div>
+  </details>
+  {% endif %}
+  <div class="card-actions">
+    <form method="POST"
+      action="{{ url_for('ui.label', posting_id=row.id, return_interest=interest, title_q=title_q, body_q=body_q) }}"
+      class="inline">
+      <input type="hidden" name="interest" value="positive" />
+      <button type="submit" class="small btn-positive">&#x1F44D; Interested</button>
+    </form>
+    <form method="POST"
+      action="{{ url_for('ui.label', posting_id=row.id, return_interest=interest, title_q=title_q, body_q=body_q) }}"
+      class="inline">
+      <input type="hidden" name="interest" value="negative" />
+      <button type="submit" class="small btn-negative">&#x1F44E; Not Interested</button>
+    </form>
+    {% if not row.applied %}
+    <form method="POST"
+      action="{{ url_for('ui.label', posting_id=row.id, return_interest=interest, title_q=title_q, body_q=body_q) }}"
+      class="inline">
+      <input type="hidden" name="applied" value="true" />
+      <button type="submit" class="small btn-applied">Applied</button>
+    </form>
+    {% else %}
+    <span class="badge badge-applied">Applied ✓</span>
+    {% endif %}
+  </div>
+</div>
+{% endfor %}
+
+<div class="pagination">
+  {% if page > 1 %}
+  <a href="{{ url_for('ui.postings', interest=interest, page=page-1, title_q=title_q, body_q=body_q) }}"
+    >&laquo; Prev</a
+  >
+  {% endif %}
+  <span class="current">Page {{ page }}</span>
+  {% if has_next %}
+  <a href="{{ url_for('ui.postings', interest=interest, page=page+1, title_q=title_q, body_q=body_q) }}"
+    >Next &raquo;</a
+  >
+  {% endif %}
+</div>
+{% elif title_q or body_q %}
+<p>No postings match the current filters.</p>
+{% else %}
+<p>No postings found.</p>
+{% endif %}

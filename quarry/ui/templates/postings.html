@@ -5,7 +5,8 @@
 
 <div class="toolbar">
   <form method="POST" action="{{ url_for('ui.retrain') }}" class="inline retrain-form">
-    <input type="hidden" name="q" value="{{ q }}" />
+    <input type="hidden" name="title_q" value="{{ title_q }}" />
+    <input type="hidden" name="body_q" value="{{ body_q }}" />
     <input type="hidden" name="return_interest" value="{{ interest }}" />
     <button type="submit" class="small btn-retrain" {% if label_count < 5 %}disabled title="Need at least 5 interest labels to train"{% endif %}>
       Retrain Classifier
@@ -13,7 +14,8 @@
     <span class="label-count">{{ label_count }} interest label{{ 's' if label_count != 1 else '' }} since last train</span>
   </form>
   <form method="POST" action="{{ url_for('ui.scan') }}" class="inline scan-form">
-    <input type="hidden" name="q" value="{{ q }}" />
+    <input type="hidden" name="title_q" value="{{ title_q }}" />
+    <input type="hidden" name="body_q" value="{{ body_q }}" />
     <input type="hidden" name="return_interest" value="{{ interest }}" />
     <button type="submit" class="small btn-scan">Run Scan</button>
   </form>
@@ -23,7 +25,7 @@
   <span class="filter-label">Interest:</span>
   {% for i in valid_interests %}
   <a
-    href="{{ url_for('ui.postings', interest=i, q=q) }}"
+    href="{{ url_for('ui.postings', interest=i, title_q=title_q, body_q=body_q) }}"
     class="interest-filter {{ 'active' if i == interest else '' }}"
   >
     {{ interest_labels[i] }}
@@ -33,94 +35,41 @@
 
 <form method="GET" action="{{ url_for('ui.postings') }}" class="search-form">
   <input type="hidden" name="interest" value="{{ interest }}" />
-  <input type="text" name="q" value="{{ q }}" placeholder="Search title or description..." class="search-input" />
-  {% if q %}
-  <a href="{{ url_for('ui.postings', interest=interest) }}" class="search-clear">Clear</a>
+  <label>
+    <span class="filter-label">Title contains</span>
+    <input
+      type="text"
+      name="title_q"
+      value="{{ title_q }}"
+      placeholder="e.g. senior engineer"
+      class="search-input"
+      hx-get="{{ url_for('ui.postings') }}"
+      hx-target="#results"
+      hx-trigger="keyup changed delay:300ms"
+      hx-include="[name='title_q'],[name='body_q'],[name='interest']"
+    />
+  </label>
+  <label>
+    <span class="filter-label">Description contains</span>
+    <input
+      type="text"
+      name="body_q"
+      value="{{ body_q }}"
+      placeholder="e.g. python, kubernetes"
+      class="search-input"
+      hx-get="{{ url_for('ui.postings') }}"
+      hx-target="#results"
+      hx-trigger="keyup changed delay:300ms"
+      hx-include="[name='title_q'],[name='body_q'],[name='interest']"
+    />
+  </label>
+  {% if title_q or body_q %}
+  <a href="{{ url_for('ui.postings', interest=interest) }}" class="search-clear">Clear filters</a>
   {% endif %}
   <button type="submit" class="small">Search</button>
 </form>
 
-{% if results %}
-{% for row in results %}
-<div class="card" id="posting-{{ row.id }}">
-  <div class="card-title">
-    <a href="{{ row.url }}">{{ row.title }}</a>
-  </div>
-  <div class="card-meta">
-    {{ row.company_name }} {% if row.location %} &middot; {{ row.location }}{% endif %} {% if row.work_model %}
-    <span class="badge badge-{{ row.work_model }}">{{ row.work_model }}</span>
-    {% endif %}
-    {% if row.interest is not none %}
-    <span class="badge {{ 'badge-positive' if row.interest else 'badge-negative' }}">
-      {{ 'Interested' if row.interest else 'Not Interested' }}
-    </span>
-    {% endif %}
-    {% if row.role_tier %}
-    <span class="badge badge-{{ row.role_tier }}">{{ row.role_tier }}</span>
-    {% endif %}
-  </div>
-  <div class="card-meta score-line">
-    {% if row.composite_score and row.composite_score > 0 %}
-    <span class="score">Score: {{ "%.3f"|format(row.composite_score) }} (composite)</span>
-    <span class="score-detail">classifier {{ "%.3f"|format(row.classifier_score or 0) }} &middot; similarity {{ "%.3f"|format(row.similarity_score or 0) }}{% if row.fit_score and row.fit_score != 0 %} &middot; fit {{ "+%d"|format(row.fit_score) if row.fit_score > 0 else row.fit_score }}{% endif %}</span>
-    {% elif row.similarity_score and row.similarity_score > 0 %}
-    <span class="score">similarity: {{ "%.3f"|format(row.similarity_score) }}</span>
-    {% else %}
-    <span class="score">no score</span>
-    {% endif %}
-    {% if row.fit_reason %}
-    <span class="fit-reason">{{ row.fit_reason }}</span>
-    {% endif %}
-  </div>
-  {% if row.description %}
-  <details>
-    <summary>Description</summary>
-    <div class="description">{{ row.description }}</div>
-  </details>
-  {% endif %}
-  <div class="card-actions">
-    <form method="POST"
-      action="{{ url_for('ui.label', posting_id=row.id, return_interest=interest, q=q) }}"
-      class="inline">
-      <input type="hidden" name="interest" value="positive" />
-      <button type="submit" class="small btn-positive">&#x1F44D; Interested</button>
-    </form>
-    <form method="POST"
-      action="{{ url_for('ui.label', posting_id=row.id, return_interest=interest, q=q) }}"
-      class="inline">
-      <input type="hidden" name="interest" value="negative" />
-      <button type="submit" class="small btn-negative">&#x1F44E; Not Interested</button>
-    </form>
-    {% if not row.applied %}
-    <form method="POST"
-      action="{{ url_for('ui.label', posting_id=row.id, return_interest=interest, q=q) }}"
-      class="inline">
-      <input type="hidden" name="applied" value="true" />
-      <button type="submit" class="small btn-applied">Applied</button>
-    </form>
-    {% else %}
-    <span class="badge badge-applied">Applied ✓</span>
-    {% endif %}
-  </div>
+<div id="results">
+  {% include "postings_results.html" %}
 </div>
-{% endfor %}
-
-<div class="pagination">
-  {% if page > 1 %}
-  <a href="{{ url_for('ui.postings', interest=interest, page=page-1, q=q) }}"
-    >&laquo; Prev</a
-  >
-  {% endif %}
-  <span class="current">Page {{ page }}</span>
-  {% if has_next %}
-  <a href="{{ url_for('ui.postings', interest=interest, page=page+1, q=q) }}"
-    >Next &raquo;</a
-  >
-  {% endif %}
-</div>
-{% elif q %}
-<p>No postings match &ldquo;{{ q }}&rdquo;.</p>
-{% else %}
-<p>No postings found.</p>
-{% endif %}
 {% endblock %}

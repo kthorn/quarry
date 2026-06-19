@@ -72,6 +72,31 @@ def train_classifier(
             "training_samples": len(interest_labels),
         }
 
+    # Classifiers need both classes and at least 2 samples per class for
+    # cross-validation. Report the actual distribution so the user knows what
+    # to label next.
+    positive_count = sum(1 for label in interest_labels if label)
+    negative_count = len(interest_labels) - positive_count
+    if positive_count == 0 or negative_count == 0:
+        tagged = "interested" if positive_count > 0 else "not-interested"
+        return {
+            "error": (
+                f"All {len(interest_labels)} labels are {tagged}. "
+                "You need both interested and not-interested labels to train the classifier."
+            ),
+            "training_samples": len(interest_labels),
+        }
+    if positive_count < 2 or negative_count < 2:
+        minority = "interested" if positive_count < negative_count else "not-interested"
+        return {
+            "error": (
+                f"Found {positive_count} interested and {negative_count} not-interested labels. "
+                "The classifier needs at least 2 of each class for cross-validation. "
+                f"Label more {minority} postings first."
+            ),
+            "training_samples": len(interest_labels),
+        }
+
     scorer = ClassifierScorer(min_training_labels=min_labels)
     result = scorer.fit(interest_labels, embeddings)
     if result is None:

@@ -321,8 +321,6 @@ class Database:
                 )
             return out
 
-
-
     # ── User Posting State methods ─────────────────────────────
 
     def set_interest(
@@ -713,8 +711,6 @@ class Database:
         """
         return self.get_user_settings_raw(user_id).get(key)
 
-
-
     def get_postings_with_scores(
         self,
         user_id: int = 1,
@@ -722,6 +718,8 @@ class Database:
         limit: int = 20,
         offset: int = 0,
         search: str | None = None,
+        title_search: str | None = None,
+        body_search: str | None = None,
         interest: str | None = None,
         similarity_threshold: float = 0.0,
     ) -> list[dict]:
@@ -825,17 +823,26 @@ class Database:
                 or_(ORMState.interest.is_(None), ORMState.user_id.is_(None))
             )
 
-        # Keyword search filter
+        def _escape_like(text: str) -> str:
+            return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+        # Keyword search filter (legacy OR across title and description)
         if search:
-            escaped = (
-                search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-            )
+            escaped = _escape_like(search)
             stmt = stmt.where(
                 or_(
                     ORMPosting.title.ilike(f"%{escaped}%", escape="\\"),
                     ORMPosting.description.ilike(f"%{escaped}%", escape="\\"),
                 )
             )
+
+        # Separate title/body filters (ANDed together)
+        if title_search:
+            escaped = _escape_like(title_search)
+            stmt = stmt.where(ORMPosting.title.ilike(f"%{escaped}%", escape="\\"))
+        if body_search:
+            escaped = _escape_like(body_search)
+            stmt = stmt.where(ORMPosting.description.ilike(f"%{escaped}%", escape="\\"))
 
         # Similarity threshold filter
         if similarity_threshold > 0:

@@ -1,6 +1,18 @@
 # STATUS
 
-Last updated: 2026-05-17 (hermetic test fixes: settings UI, scheduler, and M4 integration tests no longer load real sentence-transformers model)
+Last updated: 2026-06-19 (interactive title/body filters on postings page)
+
+## In Progress
+
+_(none)_
+
+## Recent Updates
+
+- **Interactive title/body filters** (2026-06-19): replaced the single combined `q` search box on `/postings` with separate **Title contains** and **Description contains** text inputs that update the list live via HTMX (`keyup changed delay:300ms`). `get_postings_with_scores()` gained `title_search` / `body_search` params (ANDed; legacy `search` OR kept for backward compat). New `postings_results.html` partial rendered for `HX-Request: true` requests; full page otherwise. HTMX 1.9.12 (SRI-pinned) added to `base.html`. All label/retrain/scan/pagination links preserve both filters. Design spec: `docs/superpowers/specs/2026-06-16-interactive-title-body-filters-design.md`. 555 tests passing.
+
+- **Classifier error message improvement**: `quarry/rank/train.py` now reports the exact positive/negative label distribution when training fails due to class imbalance (e.g., "Found 1 interested and 23 not-interested labels..." instead of the generic "at least 5" message).
+- **New tests**: `tests/test_rank_train.py` covers single-class, imbalanced, and balanced training scenarios.
+- **Test count**: 543 passed, 17 skipped.
 
 ## Phase 1 — MVP Progress
 
@@ -37,8 +49,9 @@ Last updated: 2026-05-17 (hermetic test fixes: settings UI, scheduler, and M4 in
 - **Company page overhaul**: card-based UI with LLM-generated descriptions (Wikipedia → website → LLM), inline editing, em-dash cleanup; LLM client module (`quarry/llm.py`); description generation pipeline (`quarry/resolve/description.py`); trigger integrations on seed/scheduler/add-company; backfill-descriptions CLI; plan refined via pi-refine (8 fixes across 2 review iterations)
 - **Settings UI**: (`feature/settings-ui` branch) unified settings page with sidebar layout (7 sections), `UserSettingsService` with config.yaml fallback, search query management (add/retire), all filter configs editable from web UI, JobSpy settings, scheduler integration via service; design spec refined via pi-refine (3 iterations, 2 models); 557 tests passing
 - **Company filter simplification** (2026-05-17): removed redundant Company Filter section from Settings UI; company allow/deny is now derived from the watchlist (Active = allow, manually deactivated = deny, search-discovered = allow); `CompanyFilterConfig` still used internally by the pipeline but populated from watchlist state instead of user-editable text fields
-- **Schema unification** (2026-05-17): `user_labels` and `user_posting_status` merged into single `user_posting_state` table with nullable boolean `interest` (TRUE=interested, FALSE=not, NULL=unevaluated) and boolean `applied`. Status tabs removed from UI, replaced with interest filter + applied toggle. Classifier training now uses boolean labels instead of string signals. `label_source`, `skip`, `seen`, `rejected`, `archived` concepts all dropped. 540 tests passing, lint/type-check clean. Design spec: `docs/superpowers/specs/2026-05-17-unify-posting-state-design.md`
+- **Schema unification** (2026-05-17): `user_labels` and `user_posting_status` merged into single `user_posting_state` table with nullable boolean `interest` (TRUE=interested, FALSE=not, NULL=unevaluated) and boolean `applied`. Status tabs removed from UI, replaced with interest filter + applied toggle. Classifier training now uses boolean labels instead of string signals. `label_source`, `skip`, `seen`, `rejected`, `archived` concepts all dropped. 540 tests passing, lint/type-check clean. Design spec: `docs/superpowers/specs/2026-05-17-unify-posting-state-design.md`; implementation plan: `docs/plans/completed/2026-05-17-unify-posting-state.md`
 - **Hermetic test fixes** (2026-05-17): `test_settings_ui.py`, `test_scheduler.py`, and `test_m4_integration.py` now mock `quarry.pipeline.embedder._get_model` via module-level `autouse` fixtures, preventing real `SentenceTransformer` model loads. Settings UI role-description test dropped from 11s → 0.8s. `test_pipeline_embedder.py` (which intentionally tests the real embedder) skips gracefully when the model is unavailable. Structural fix tracked in [#4](https://github.com/kthorn/quarry/issues/4) (decouple settings writes from embedding computation + injectable `EmbeddingProvider`)
+- **Flaky test fix** (2026-06-15): `test_store_cli.py::test_add_company_with_domain` no longer fails with `RuntimeError: Event loop is closed`. `resolve_company_sync()` now closes its HTTP client on the same event loop it creates, and `add_company` uses `resolve_company_sync()` instead of chaining separate `asyncio.run(resolve_company(...))` + `asyncio.run(close_client())` calls.
 
 ## Completed Plans & Specs
 
@@ -83,7 +96,7 @@ All completed plans and design specs live in `docs/plans/completed/`:
 - `python -m pytest tests/test_orm.py -v` — **17 ORM tests passing** (Phase 2)
 - `ruff check .` — clean
 - `pyright quarry/` — clean
-- `python -m pytest tests/ -q` — **555 passed, 22 skipped** (0 failures)
+- `python -m pytest tests/ -q` — **555 passed, 17 skipped** (0 failures)
 - **Note:** All four phases complete. All callers use per-user ORM methods with `user_id=1`. `get_recent_postings`/`get_postings_paginated`/`db.execute()` removed. Backward-compat aliases removed from `models.py`.
 - **Ranking pipeline:** `python -m quarry.rank list-scorers` — shows 5 registered scorers
 - **Ranking CLI:** `python -m quarry.rank config get|set`, `python -m quarry.rank train`, `python -m quarry.rank evaluate`, `python -m quarry.rank recompute`
