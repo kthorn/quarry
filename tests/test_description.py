@@ -140,6 +140,92 @@ def test_fetch_wikipedia_summary_bare_404_fallback_succeeds():
         assert result == "Stripe is a payment processing company."
 
 
+def test_fetch_wikipedia_summary_retries_429_then_succeeds():
+    """A 429 with Retry-After is retried; the next attempt succeeds.
+
+    Each tenacity retry re-runs the whole fetch_wikipedia_summary, so the
+    bare title is fetched once per attempt. The bare title 429s twice, then
+    succeeds on the 3rd attempt (fallback never reached).
+    """
+    import httpx
+
+    def _make_429():
+        m = MagicMock()
+        m.status_code = 429
+        m.headers = {"Retry-After": "1"}
+        m.raise_for_status.side_effect = httpx.HTTPStatusError(
+            "429 Too Many Requests",
+            request=MagicMock(),
+            response=MagicMock(status_code=429, headers={"Retry-After": "1"}),
+        )
+        return m
+
+    success = MagicMock()
+    success.status_code = 200
+    success.json.return_value = {"extract": "OpenAI is an AI lab."}
+
+    with patch(
+        "quarry.resolve.description.httpx.get",
+        side_effect=[_make_429(), _make_429(), success],
+    ):
+        result = fetch_wikipedia_summary("OpenAI")
+    assert result == "OpenAI is an AI lab."
+
+
+def test_fetch_wikipedia_summary_persistent_429_raises_after_max_attempts():
+    """A persistent 429 exhausts retries and reraises (so the caller can
+    fall back to website/LLM, or log+skip — not retry forever)."""
+    import httpx
+
+    from quarry.resolve.description import _WIKI_RETRY_MAX_ATTEMPTS
+
+    def _make_429():
+        m = MagicMock()
+        m.status_code = 429
+        m.headers = {"Retry-After": "1"}
+        m.raise_for_status.side_effect = httpx.HTTPStatusError(
+            "429 Too Many Requests",
+            request=MagicMock(),
+            response=MagicMock(status_code=429, headers={"Retry-After": "1"}),
+        )
+        return m
+
+    # One 429 per attempt; tenacity stops after _WIKI_RETRY_MAX_ATTEMPTS.
+    misses = [_make_429() for _ in range(_WIKI_RETRY_MAX_ATTEMPTS)]
+    with patch(
+        "quarry.resolve.description.httpx.get",
+        side_effect=misses,
+    ):
+        with pytest.raises(httpx.HTTPStatusError) as excinfo:
+            fetch_wikipedia_summary("RateLimitedCorp")
+    assert excinfo.value.response.status_code == 429
+
+
+def test_fetch_wikipedia_summary_404_not_retried():
+    """A 404 is a 'miss', not a transient error — it must NOT be retried.
+
+    Regression guard: the old retry-on-any-HTTPStatusError would retry 404s.
+    Now only 429/5xx retry. A bare 404 + fallback 404 should consume exactly
+    2 httpx.get calls (one per title), not more.
+    """
+    import httpx
+
+    def _make_404():
+        m = MagicMock()
+        m.raise_for_status.side_effect = httpx.HTTPStatusError(
+            "404 Not Found", request=MagicMock(), response=MagicMock(status_code=404)
+        )
+        return m
+
+    with patch(
+        "quarry.resolve.description.httpx.get",
+        side_effect=[_make_404(), _make_404()],
+    ) as mock_get:
+        result = fetch_wikipedia_summary("NonExistentCorp123")
+    assert result is None
+    assert mock_get.call_count == 2
+
+
 def test_generate_company_description_wikipedia():
     company = Company(name="OpenAI", domain="openai.com")
     with (

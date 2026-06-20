@@ -15,9 +15,7 @@ import time
 import httpx
 from tenacity import (
     retry,
-    retry_if_exception_type,
     stop_after_attempt,
-    wait_exponential,
 )
 
 from quarry.llm import LLMError, complete
@@ -48,6 +46,52 @@ _WIKI_SEMAPHORE = threading.BoundedSemaphore(3)
 # Enforced at the semaphore level: after releasing, we sleep briefly
 # so the next waiter doesn't fire instantly.
 _WIKI_COOLDOWN = 0.3
+
+# Retry tuning for transient HTTP errors (429 / 5xx / network faults).
+# 404s are NOT retried — they're caught inside fetch_wikipedia_summary and
+# treated as a "miss" (with a "(company)" fallback), not a transient error.
+_WIKI_RETRY_MAX_ATTEMPTS = 5
+_WIKI_RETRY_MAX_WAIT = 15.0  # seconds; caps exponential backoff
+_WIKI_RETRY_AFTER_CAP = 30.0  # seconds; caps a server-provided Retry-After
+
+
+def _is_transient_http_error(retry_state) -> bool:
+    """Retry only on transient HTTP errors: 429, 5xx, and network faults.
+
+    Used as tenacity's ``retry`` predicate. 404/4xx (other than 429) are not
+    retried — they're handled inside ``fetch_wikipedia_summary`` (404 → miss
+    + fallback) or are permanent client errors worth surfacing immediately.
+    """
+    exc = retry_state.outcome.exception() if retry_state.outcome else None
+    if exc is None:
+        return False
+    if isinstance(
+        exc, (httpx.ConnectError, httpx.TimeoutException, httpx.RemoteProtocolError)
+    ):
+        return True
+    if isinstance(exc, httpx.HTTPStatusError):
+        code = exc.response.status_code
+        return code == 429 or code >= 500
+    return False
+
+
+def _wait_retry_after_or_exponential(retry_state) -> float:
+    """Wait that honors the server's ``Retry-After`` on 429/503, else exponential.
+
+    Wikipedia returns a ``Retry-After`` header on 429s; respecting it is the
+    difference between recovering and burning all retries inside the rate
+    limit window. Falls back to exponential backoff (1, 2, 4, 8, 15…) for
+    network faults and 5xx without a header.
+    """
+    exc = retry_state.outcome.exception() if retry_state.outcome else None
+    if isinstance(exc, httpx.HTTPStatusError):
+        retry_after = exc.response.headers.get("Retry-After")
+        if retry_after:
+            try:
+                return min(float(retry_after), _WIKI_RETRY_AFTER_CAP)
+            except (TypeError, ValueError):
+                pass
+    return min(2.0 ** (retry_state.attempt_number - 1), _WIKI_RETRY_MAX_WAIT)
 
 
 def _sanitize_wikipedia_title(company_name: str) -> str:
@@ -86,16 +130,9 @@ def _fetch_wikipedia_title(title: str) -> str | None:
 
 
 @retry(
-    retry=retry_if_exception_type(
-        (
-            httpx.HTTPStatusError,
-            httpx.ConnectError,
-            httpx.TimeoutException,
-            httpx.RemoteProtocolError,
-        )
-    ),
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=1, max=5),
+    retry=_is_transient_http_error,
+    wait=_wait_retry_after_or_exponential,
+    stop=stop_after_attempt(_WIKI_RETRY_MAX_ATTEMPTS),
     reraise=True,
 )
 def fetch_wikipedia_summary(company_name: str) -> str | None:
