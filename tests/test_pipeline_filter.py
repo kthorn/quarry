@@ -834,6 +834,8 @@ class TestEvaluateLocationMatch:
         result = evaluate_location_match("New York, NY", None, config)
         assert result.filter_active is True
         assert result.work_type_match is True  # strict: targets_set=True
+        assert result.location_relevant is True
+        assert result.location_match is False
         assert result.passes is False
 
     def test_none_unparseable_generous_passes(self):
@@ -860,6 +862,7 @@ class TestEvaluateLocationMatch:
             result.work_type_match is True
         )  # strict: targets_set=True -> treat like in-person
         assert result.location_relevant is True
+        assert result.location_match is False
         assert result.passes is False
 
     def test_remote_only_prefs_onsite_fails(self):
@@ -880,6 +883,7 @@ class TestEvaluateLocationMatch:
         result = evaluate_location_match("Anywhere", None, config)
         assert result.filter_active is True
         assert result.work_type_match is True
+        assert result.location_relevant is False
         assert result.passes is True
 
     def test_does_not_mutate_config(self):
