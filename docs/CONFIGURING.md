@@ -100,7 +100,7 @@ Use this to tune your threshold and blocklist: sort by score to find the cutoff 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `db_path` | `./quarry.db` | Path to the SQLite database. Created if it doesn't exist. Can be relative or absolute. |
-| `seed_file` | `./seed_data.yaml` | Path to the YAML file loaded by `python -m quarry.agent tools seed`. See `seed_data.yaml` for format. |
+| `seed_file` | `./seed_data.yaml` | Path to the YAML file loaded by `python -m quarry.agent.tools seed`. See `seed_data.yaml` for format. |
 
 ### Role targeting
 
