@@ -244,9 +244,11 @@ def test_reset_keep_companies_removes_pkl_files(seeded_db):
 
 
 def test_reset_full_clears_all_tables(seeded_db):
-    """reset --yes (full) empties all tables including companies."""
+    """reset --yes (full) empties every table except users (re-seeded)."""
     db_path, models_dir = seeded_db
     engine = get_engine(db_path)
+
+    from quarry.store.models import Base
 
     runner = CliRunner()
     with (
@@ -258,15 +260,22 @@ def test_reset_full_clears_all_tables(seeded_db):
 
     assert result.exit_code == 0
 
-    # All tables must be empty
-    assert _count_table(engine, "companies") == 0
-    assert _count_table(engine, "job_postings") == 0
-    assert _count_table(engine, "user_posting_state") == 0
-    assert _count_table(engine, "user_settings") == 0
-    assert _count_table(engine, "user_search_queries") == 0
-    assert _count_table(engine, "crawl_runs") == 0
-    assert _count_table(engine, "classifier_versions") == 0
-    assert _count_table(engine, "user_classifier_scores") == 0
+    # Every table in Base.metadata must be empty except users (re-seeded)
+    for table in Base.metadata.sorted_tables:
+        name = table.name
+        count = _count_table(engine, name)
+        if name == "users":
+            assert count == 1, (
+                f"Table {name} should have 1 row (re-seeded), got {count}"
+            )
+        else:
+            assert count == 0, f"Table {name} should be empty, got {count}"
+
+    # Verify the re-seeded default user row
+    users = _get_users(engine)
+    assert users[0]["id"] == 1
+    assert users[0]["email"] == "default@local"
+    assert users[0]["name"] == "Default User"
 
 
 def test_reset_full_reseeds_default_user(seeded_db):
@@ -316,6 +325,51 @@ def test_reset_full_removes_pkl_files(seeded_db):
 
 
 # ── Tests: reset without --yes (confirmation) ────────────────────
+
+
+def test_reset_accepts_correct_answer(seeded_db):
+    """reset --keep-companies without --yes accepts 'reset' at prompt."""
+    db_path, models_dir = seeded_db
+    engine = get_engine(db_path)
+
+    runner = CliRunner()
+    with (
+        patch("quarry.store.__main__.settings") as mock_settings,
+        patch("quarry.store.__main__._MODELS_DIR", models_dir),
+    ):
+        mock_settings.db_path = str(db_path)
+        result = runner.invoke(cli, ["reset", "--keep-companies"], input="reset\n")
+
+    assert result.exit_code == 0
+    # Output acknowledges proceeding (deletion count lines)
+    assert "Deleted" in result.output
+    # .pkl removal acknowledged
+    assert "Removed" in result.output
+
+    # Posting-derived tables empty
+    assert _count_table(engine, "job_postings") == 0
+    assert _count_table(engine, "user_posting_state") == 0
+    assert _count_table(engine, "user_classifier_scores") == 0
+    assert _count_table(engine, "classifier_versions") == 0
+    assert _count_table(engine, "crawl_runs") == 0
+    assert _count_table(engine, "user_similarity_scores") == 0
+    assert _count_table(engine, "user_ranking_scores") == 0
+    assert _count_table(engine, "user_enriched_postings") == 0
+    assert _count_table(engine, "job_posting_locations") == 0
+
+    # Company-infrastructure tables preserved
+    assert _count_table(engine, "companies") == 1
+    assert _count_table(engine, "user_settings") == 1
+    assert _count_table(engine, "user_search_queries") == 1
+
+    # Default user still present
+    users = _get_users(engine)
+    assert len(users) == 1
+    assert users[0]["id"] == 1
+    assert users[0]["email"] == "default@local"
+
+    # .pkl removed
+    assert len(list(models_dir.glob("classifier_*.pkl"))) == 0
 
 
 def test_reset_declines_on_empty_input(seeded_db):
