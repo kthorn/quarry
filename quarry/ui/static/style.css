@@ -112,6 +112,26 @@ nav a:hover {
 	color: #fff;
 }
 
+.badge-unknown {
+	background: #e2e3e5;
+	color: #6c757d;
+}
+
+.badge-work-miss {
+	background: #dc3545;
+	color: #fff;
+}
+
+.badge-loc-match {
+	background: #d4edda;
+	color: #155724;
+}
+
+.badge-loc-miss {
+	background: #dc3545;
+	color: #fff;
+}
+
 .tabs {
 	display: flex;
 	gap: 0.25rem;

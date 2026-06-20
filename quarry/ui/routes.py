@@ -11,7 +11,9 @@ from flask import (
     url_for,
 )
 
+from quarry.config import settings as app_settings
 from quarry.models import UserWatchlistItem
+from quarry.pipeline.filter import evaluate_location_match
 from quarry.settings_service import UserSettingsService
 from quarry.store.db import Database
 
@@ -50,20 +52,91 @@ def postings():
     title_q = request.args.get("title_q", "")
     body_q = request.args.get("body_q", "")
 
+    show_all = request.args.get("show_all") == "1"
+    show_all_param = request.args.get("show_all", "")
+
     db = get_db()
     per_page = current_app.config["PER_PAGE"]
-    offset = (page - 1) * per_page
 
-    results = db.get_postings_with_scores(
-        user_id=USER_ID,
-        limit=per_page + 1,
-        offset=offset,
-        title_search=title_q if title_q else None,
-        body_search=body_q if body_q else None,
-        interest=interest if interest != "all" else None,
-    )
-    has_next = len(results) > per_page
-    results = results[:per_page]
+    # Load location filter config (same pattern as scheduler.py:276-279)
+    ss = UserSettingsService(db, user_id=USER_ID)
+    config = ss.get_location_filter()
+    if config is None:
+        config = app_settings.filters.location_filter if app_settings.filters else None
+    if config is not None:
+        config.normalize_config()  # idempotent after Task 2
+
+    title_search = title_q if title_q else None
+    body_search = body_q if body_q else None
+    interest_param = interest if interest != "all" else None
+
+    if not show_all:
+        # Filtered view: fetch-until-full loop with Python post-filter.
+        # Known cross-page approximation: page-based offset + post-filter
+        # may cause duplicate visible rows across pages.  show_all=1 is the
+        # exact-pagination escape hatch.  (Cursor-based pagination is a
+        # documented follow-up.)
+        base_offset = (page - 1) * per_page
+        offset = base_offset
+        max_fetch_factor = 10
+        max_sql_rows = per_page * max_fetch_factor
+        passing_rows: list[dict] = []
+        total_fetched = 0
+
+        while len(passing_rows) < per_page + 1 and total_fetched < max_sql_rows:
+            batch = db.get_postings_with_scores(
+                user_id=USER_ID,
+                limit=per_page * 4,
+                offset=offset,
+                title_search=title_search,
+                body_search=body_search,
+                interest=interest_param,
+            )
+            if not batch:
+                break  # corpus exhausted
+            total_fetched += len(batch)
+            for row in batch:
+                lmr = evaluate_location_match(
+                    row.get("location"), row.get("work_model"), config
+                )
+                row["filter_active"] = lmr.filter_active
+                row["work_type_match"] = lmr.work_type_match
+                row["location_match"] = lmr.location_match
+                row["location_relevant"] = lmr.location_relevant
+                row["passes"] = lmr.passes
+                if lmr.passes:
+                    passing_rows.append(row)
+                    if len(passing_rows) >= per_page + 1:
+                        break
+            offset += len(batch)
+            if len(batch) < per_page * 4:
+                break  # corpus exhausted
+
+        has_next = len(passing_rows) > per_page
+        results = passing_rows[:per_page]
+    else:
+        # show_all: single-query path (exact pagination, no post-filter hide)
+        offset = (page - 1) * per_page
+        results = db.get_postings_with_scores(
+            user_id=USER_ID,
+            limit=per_page + 1,
+            offset=offset,
+            title_search=title_search,
+            body_search=body_search,
+            interest=interest_param,
+        )
+        has_next = len(results) > per_page
+        results = results[:per_page]
+        # Compute match booleans for badges (show_all shows everything)
+        for row in results:
+            lmr = evaluate_location_match(
+                row.get("location"), row.get("work_model"), config
+            )
+            row["filter_active"] = lmr.filter_active
+            row["work_type_match"] = lmr.work_type_match
+            row["location_match"] = lmr.location_match
+            row["location_relevant"] = lmr.location_relevant
+            row["passes"] = lmr.passes
 
     label_count = int(db.get_user_setting(USER_ID, "labels_since_last_train") or "0")
 
@@ -79,6 +152,7 @@ def postings():
         interest=interest,
         page=page,
         has_next=has_next,
+        show_all=show_all_param,
         valid_interests=VALID_INTERESTS,
         interest_labels=INTEREST_LABELS,
         title_q=title_q,
@@ -108,12 +182,14 @@ def label(posting_id):
     return_interest = request.args.get("return_interest", "all")
     return_title_q = request.args.get("title_q", "")
     return_body_q = request.args.get("body_q", "")
+    return_show_all = request.args.get("show_all")
     return redirect(
         url_for(
             "ui.postings",
             interest=return_interest,
             title_q=return_title_q,
             body_q=return_body_q,
+            show_all=return_show_all,
         )
         + f"#posting-{posting_id}"
     )
@@ -127,6 +203,7 @@ def retrain():
     return_title_q = request.form.get("title_q", "")
     return_body_q = request.form.get("body_q", "")
     return_interest = request.form.get("return_interest", "all")
+    return_show_all = request.form.get("show_all")
 
     result = train_classifier(db=db, user_id=USER_ID, min_labels=5)
 
@@ -144,6 +221,7 @@ def retrain():
             title_q=return_title_q,
             body_q=return_body_q,
             interest=return_interest,
+            show_all=return_show_all,
         )
     )
 
@@ -156,6 +234,7 @@ def scan():
     return_title_q = request.form.get("title_q", "")
     return_body_q = request.form.get("body_q", "")
     return_interest = request.form.get("return_interest", "all")
+    return_show_all = request.form.get("show_all")
 
     try:
         summary = run_once(db, user_id=USER_ID)
@@ -176,6 +255,7 @@ def scan():
             title_q=return_title_q,
             body_q=return_body_q,
             interest=return_interest,
+            show_all=return_show_all,
         )
     )
 
@@ -472,12 +552,24 @@ def settings_location():
     states_text = request.form.get("accept_states", "")
     regions_text = request.form.get("accept_regions", "")
 
+    # Preserve existing none_strictness unless explicitly changed
+    if "none_strictness" in request.form:
+        none_strictness_raw = request.form.get("none_strictness", "generous")
+    else:
+        existing = ss.get_location_filter()
+        if existing is not None:
+            none_strictness_raw = existing.none_strictness.value
+        else:
+            none_strictness_raw = "generous"
+
     cities = [c.strip() for c in cities_text.split("\n") if c.strip()]
     states = [s.strip() for s in states_text.split("\n") if s.strip()]
     regions = [r.strip() for r in regions_text.split("\n") if r.strip()]
     nearby_radius = int(nearby_radius_str) if nearby_radius_str.strip() else None
 
-    from quarry.config import LocationFilterConfig
+    from quarry.config import LocationFilterConfig, NoneStrictness
+
+    none_strictness = NoneStrictness(none_strictness_raw)
 
     ss.set_location_filter(
         LocationFilterConfig(
@@ -486,6 +578,7 @@ def settings_location():
             nearby_radius=nearby_radius,
             accept_states=states,
             accept_regions=regions,
+            none_strictness=none_strictness,
         )
     )
     flash("Location filter saved.")

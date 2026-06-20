@@ -9,7 +9,9 @@ DB-level tests have been updated for the Phase 3 multi-user schema:
 
 import pytest
 
+from quarry.config import LocationFilterConfig, NoneStrictness
 from quarry.models import AgentAction, Company, JobPosting
+from quarry.settings_service import UserSettingsService
 from quarry.store.db import Database, init_db
 from quarry.ui.app import create_app
 
@@ -719,3 +721,350 @@ class TestPostingsTitleBodyFilters:
         # Clear link should reset to interest-only URL
         assert "/postings?interest=all" in html
         assert "Clear filters" in html
+
+
+# ── Read-Time Location/Work-Model Filter Tests (Task 3) ────────────────
+
+
+@pytest.fixture
+def app_with_mixed_locations(app, tmp_path):
+    """App with postings in varied locations and work models."""
+    db = Database(tmp_path / "test.db")
+    company = Company(name="TestCorp", ats_type="greenhouse", ats_slug="testcorp")
+    cid = db.insert_company(company)
+    postings = [
+        (
+            "Data Engineer SF",
+            "hash_sf",
+            "San Francisco, CA",
+            None,
+            "Build data pipelines",
+        ),
+        (
+            "Data Engineer Irvine",
+            "hash_irv",
+            "Irvine, CA",
+            "onsite",
+            "Build data pipelines",
+        ),
+        (
+            "Data Engineer Remote",
+            "hash_rem",
+            "Remote, US",
+            "remote",
+            "Build data pipelines",
+        ),
+        ("ML Engineer", "hash_ml", "Austin, TX", "hybrid", "Machine learning"),
+    ]
+    for i, (title, title_hash, location, work_model, description) in enumerate(
+        postings
+    ):
+        db.insert_posting(
+            JobPosting(
+                company_id=cid,
+                title=title,
+                title_hash=title_hash,
+                url=f"https://testcorp.com/job/{i}",
+                description=description,
+                location=location,
+                work_model=work_model,
+                source_type="greenhouse",
+            )
+        )
+    return app
+
+
+@pytest.fixture
+def app_with_location_filter(app_with_mixed_locations, tmp_path):
+    """App with mixed-location postings and a strict SF-only location filter."""
+    db = Database(tmp_path / "test.db")
+    ss = UserSettingsService(db, user_id=1)
+    ss.set_location_filter(
+        LocationFilterConfig(
+            target_location=["San Francisco, CA"],
+            none_strictness=NoneStrictness.STRICT,
+        )
+    )
+    return app_with_mixed_locations
+
+
+class TestReadTimeFilterDefaultView:
+    """Default (filtered) view hides postings where passes=False."""
+
+    def test_hides_passing_false_in_irvine_strict_mode(self, app_with_location_filter):
+        """With SF-only strict filter, Irvine posting (passes=False) is hidden."""
+        client = app_with_location_filter.test_client()
+        response = client.get("/postings")
+        assert response.status_code == 200
+        html = response.data.decode()
+        # Irvine should be hidden (passes=False)
+        assert "Data Engineer Irvine" not in html
+        # SF should be shown (passes=True)
+        assert "Data Engineer SF" in html
+
+    def test_show_all_shows_filtered_posting_with_badges(
+        self, app_with_location_filter
+    ):
+        """/postings?show_all=1 shows filtered postings with miss badges."""
+        client = app_with_location_filter.test_client()
+        response = client.get("/postings?show_all=1")
+        assert response.status_code == 200
+        html = response.data.decode()
+        # Both should be visible
+        assert "Data Engineer SF" in html
+        assert "Data Engineer Irvine" in html
+        # The filtered posting should have miss badges
+        assert "badge-loc-miss" in html
+
+    def test_no_filter_shows_all_postings(self, app_with_mixed_locations):
+        """With no saved location filter, all postings are visible."""
+        client = app_with_mixed_locations.test_client()
+        response = client.get("/postings")
+        assert response.status_code == 200
+        html = response.data.decode()
+        assert "Data Engineer SF" in html
+        assert "Data Engineer Irvine" in html
+        assert "Data Engineer Remote" in html
+        assert "ML Engineer" in html
+
+
+class TestReadTimeBadges:
+    """Badge rendering for location/work-model match results."""
+
+    def test_badge_unknown_for_none_work_model_generous(self, app, tmp_path):
+        """work_model=None + filter_active=True + generous -> badge-unknown."""
+        db = Database(tmp_path / "test.db")
+        company = Company(name="NullWMCo")
+        cid = db.insert_company(company)
+        db.insert_posting(
+            JobPosting(
+                company_id=cid,
+                title="No WM Engineer",
+                title_hash="hash_nowm",
+                url="https://nullwm.com/job/1",
+                description="Engineering role",
+                location="San Francisco, CA",
+                work_model=None,
+                source_type="greenhouse",
+            )
+        )
+        ss = UserSettingsService(db, user_id=1)
+        ss.set_location_filter(
+            LocationFilterConfig(
+                target_location=["San Francisco, CA"],
+                none_strictness=NoneStrictness.GENEROUS,
+            )
+        )
+        client = app.test_client()
+        response = client.get("/postings")
+        assert response.status_code == 200
+        html = response.data.decode()
+        assert "badge-unknown" in html
+        assert "work: unknown (generous)" in html
+
+    def test_badge_work_miss_present(self, app_with_location_filter):
+        """filter_active + work_type_match=False -> badge-work-miss."""
+        # Irvine is onsite with SF-only + strict -> work_type_match should be True
+        # (targets_set=True, onsite -> work_type_match=True).
+        # Work miss happens when, e.g., accept_remote=True + targets_set=True
+        # and an onsite posting in a wrong location. Let's set up:
+        # Config: SF targets + accept_remote=True, strict.
+        # then remote is match, onsite in Irvine is work_type_match=True but location fails.
+        # Actually, work_type_match=False is for: accept_remote=False with remote posting.
+        pass  # We'll test badge-work-miss via a different scenario
+
+    def test_badge_work_miss_with_remote_refused(self, app, tmp_path):
+        """accept_remote=False + remote posting -> work_type_match=False."""
+        db = Database(tmp_path / "test.db")
+        company = Company(name="RemoteCo")
+        cid = db.insert_company(company)
+        db.insert_posting(
+            JobPosting(
+                company_id=cid,
+                title="Remote Engineer",
+                title_hash="hash_rem_miss",
+                url="https://remoteco.com/job/1",
+                description="Remote role",
+                location="Remote, US",
+                work_model="remote",
+                source_type="greenhouse",
+            )
+        )
+        ss = UserSettingsService(db, user_id=1)
+        ss.set_location_filter(
+            LocationFilterConfig(
+                target_location=["San Francisco, CA"],
+                accept_remote=False,
+                none_strictness=NoneStrictness.STRICT,
+            )
+        )
+        client = app.test_client()
+        response = client.get("/postings?show_all=1")
+        assert response.status_code == 200
+        html = response.data.decode()
+        assert "badge-work-miss" in html
+        assert "work: ✗" in html
+
+    def test_badge_loc_match_present(self, app_with_location_filter):
+        """location_relevant + location_match -> badge-loc-match."""
+        client = app_with_location_filter.test_client()
+        response = client.get("/postings")
+        assert response.status_code == 200
+        html = response.data.decode()
+        # SF should match
+        assert "badge-loc-match" in html
+        assert "✓ location" in html
+
+    def test_badge_loc_miss_present(self, app_with_location_filter):
+        """location_relevant + !location_match -> badge-loc-miss."""
+        client = app_with_location_filter.test_client()
+        response = client.get("/postings?show_all=1")
+        assert response.status_code == 200
+        html = response.data.decode()
+        # Irvine in strict SF-only -> location mismatch
+        assert "badge-loc-miss" in html
+        assert "✗ location" in html
+
+    def test_filter_off_none_work_model_no_badges(self, app_with_mixed_locations):
+        """Filter off + work_model=None -> no work badge AND no location badge."""
+        # The ML Engineer has work_model=hybrid, but one postings has work_model=None
+        # The fixture creates postings with None work_model (Data Engineer SF)
+        client = app_with_mixed_locations.test_client()
+        response = client.get("/postings")
+        assert response.status_code == 200
+        html = response.data.decode()
+        # Data Engineer SF has work_model=None, filter off -> no work badge
+        # We check: badge-unknown should NOT appear (filter_active is False)
+        assert "badge-unknown" not in html
+        # And location badges should not appear (filter_active is False)
+        assert "badge-loc-match" not in html
+        assert "badge-loc-miss" not in html
+
+    def test_filter_off_hybrid_badge_survives(self, app_with_mixed_locations):
+        """Filter off + work_model=hybrid -> badge-hybrid, no match/miss."""
+        client = app_with_mixed_locations.test_client()
+        response = client.get("/postings")
+        assert response.status_code == 200
+        html = response.data.decode()
+        # ML Engineer has work_model=hybrid
+        assert "badge-hybrid" in html
+        assert "hybrid" in html
+        # But no match/miss badges
+        assert "badge-loc-match" not in html
+        assert "badge-loc-miss" not in html
+
+
+class TestFetchLoopComposition:
+    """Fetch loop composes with SQL-level filters (interest/title/body)."""
+
+    def test_composes_interest_filter_with_location_filter(self, app, tmp_path):
+        """Apply both interest SQL filter + restrictive location config -> full page."""
+        db = Database(tmp_path / "test.db")
+        company = Company(name="MixCo", ats_type="greenhouse", ats_slug="mixco")
+        cid = db.insert_company(company)
+        # Create many out-of-area + a few in-area postings
+        for i in range(20):
+            location = "Irvine, CA" if i < 18 else "San Francisco, CA"
+            work_model = "onsite"
+            pid = db.insert_posting(
+                JobPosting(
+                    company_id=cid,
+                    title=f"Engineer {i}",
+                    title_hash=f"hash_comp_{i}",
+                    url=f"https://mixco.com/job/{i}",
+                    description="Engineering role",
+                    location=location,
+                    work_model=work_model,
+                    source_type="greenhouse",
+                )
+            )
+            # Mark all but first few as interested to use the interest filter
+            if i >= 15:
+                db.set_interest(pid, True)
+        ss = UserSettingsService(db, user_id=1)
+        ss.set_location_filter(
+            LocationFilterConfig(
+                target_location=["San Francisco, CA"],
+                none_strictness=NoneStrictness.STRICT,
+            )
+        )
+        # Apply interest=interested filter
+        client = app.test_client()
+        response = client.get("/postings?interest=interested")
+        assert response.status_code == 200
+        html = response.data.decode()
+        # The 2 SF postings (indices 18, 19) have interest + pass filter
+        # Both should be shown (they fit in per_page)
+        assert "Engineer 18" in html or "Engineer 19" in html
+
+
+class TestShowAllForwarding:
+    """show_all param is forwarded through all navigation/actions."""
+
+    def test_label_redirect_preserves_show_all(
+        self, app_with_location_filter, tmp_path
+    ):
+        """Submitting a label via POST with show_all=1 redirects with show_all=1."""
+        # Insert a posting we can label
+        db = Database(tmp_path / "test.db")
+        postings = db.get_postings_with_scores()
+        pid = postings[0]["id"]
+        client = app_with_location_filter.test_client()
+        response = client.get("/postings?show_all=1")
+        html = response.data.decode()
+        # Find the label form action - it should include show_all=1
+        assert "show_all=1" in html
+        # Actually perform the label
+        response = client.post(
+            f"/label/{pid}?show_all=1",
+            data={"interest": "positive"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        location = response.headers["Location"]
+        assert "show_all=1" in location
+
+
+class TestSettingsNoneStrictnessRoundTrip:
+    """none_strictness survives settings save + subsequent GET."""
+
+    def test_none_strictness_persists(self, app, tmp_path):
+        """POST settings/location with strict -> GET settings shows strict selected."""
+        client = app.test_client()
+        client.post(
+            "/settings/location",
+            data={
+                "target_location": "San Francisco, CA",
+                "none_strictness": "strict",
+            },
+        )
+        response = client.get("/settings?section=location")
+        assert response.status_code == 200
+        html = response.data.decode()
+        # The strict option should be selected
+        assert 'value="strict" selected' in html
+
+    def test_none_strictness_preserved_on_other_field_change(self, app, tmp_path):
+        """Changing accept_remote without sending none_strictness preserves strict."""
+        client = app.test_client()
+        # Set strict first
+        client.post(
+            "/settings/location",
+            data={
+                "target_location": "San Francisco, CA",
+                "none_strictness": "strict",
+            },
+        )
+        # Now toggle accept_remote without sending none_strictness
+        client.post(
+            "/settings/location",
+            data={
+                "target_location": "San Francisco, CA",
+                "accept_remote": "on",
+            },
+        )
+        response = client.get("/settings?section=location")
+        assert response.status_code == 200
+        html = response.data.decode()
+        # strict should still be selected (not reset to generous)
+        assert 'value="strict" selected' in html

@@ -161,6 +161,13 @@
         <p class="help-text">One region per line (e.g. Bay Area, Pacific Northwest).</p>
         <textarea name="accept_regions" id="accept_regions" rows="3">{{ "\n".join(location_f.accept_regions) if location_f.accept_regions else '' }}</textarea>
 
+        <label for="none_strictness">None Strictness</label>
+        <p class="help-text">How to handle postings with no work model. Generous: assume acceptable. Strict: require location match + targets.</p>
+        <select name="none_strictness" id="none_strictness">
+          <option value="generous" {{ 'selected' if location_f.none_strictness.value == 'generous' else '' }}>Generous</option>
+          <option value="strict" {{ 'selected' if location_f.none_strictness.value == 'strict' else '' }}>Strict</option>
+        </select>
+
         <button type="submit" class="small btn-applied">Save</button>
       </form>
 
