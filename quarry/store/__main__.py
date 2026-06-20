@@ -1,7 +1,11 @@
+import sys
+from pathlib import Path
+
 import click
 
 from quarry.config import settings
 from quarry.models import Company
+from quarry.rank.train import _MODELS_DIR
 from quarry.resolve.ats_detector import detect_ats_url_patterns
 from quarry.resolve.pipeline import resolve_company_sync
 from quarry.store.db import init_db
@@ -90,6 +94,120 @@ def add_company(name: str, domain: str | None, careers_url: str | None) -> None:
             f"Resolved: domain={company.domain}, careers_url={company.careers_url}, "
             f"ats_type={company.ats_type}, status={company.resolve_status}"
         )
+
+
+@cli.command("reset")
+@click.option(
+    "--keep-companies",
+    is_flag=True,
+    help="Keep company infrastructure (companies, watchlist, search queries, settings, users).",
+)
+@click.option("--yes", is_flag=True, help="Skip confirmation prompt.")
+def reset(keep_companies: bool, yes: bool) -> None:
+    """Reset the database, optionally keeping company data."""
+    from sqlalchemy import text
+
+    from quarry.store.models import Base
+    from quarry.store.session import get_engine, session_scope
+
+    db_path = Path(settings.db_path)
+
+    # Refuse if db file does not exist
+    if not db_path.exists():
+        click.echo(f"Error: Database file not found at {db_path}", err=True)
+        sys.exit(1)
+
+    engine = get_engine(db_path)
+
+    # Query live counts for the confirmation prompt
+    with session_scope(engine=engine) as session:
+        posting_count = (
+            session.execute(text("SELECT COUNT(*) FROM job_postings")).scalar() or 0
+        )
+        label_count = (
+            session.execute(text("SELECT COUNT(*) FROM user_posting_state")).scalar()
+            or 0
+        )
+        model_count = (
+            session.execute(text("SELECT COUNT(*) FROM classifier_versions")).scalar()
+            or 0
+        )
+        crawl_count = (
+            session.execute(text("SELECT COUNT(*) FROM crawl_runs")).scalar() or 0
+        )
+        company_count = (
+            session.execute(text("SELECT COUNT(*) FROM companies")).scalar() or 0
+        )
+        watchlist_count = (
+            session.execute(text("SELECT COUNT(*) FROM user_watchlist")).scalar() or 0
+        )
+        search_count = (
+            session.execute(text("SELECT COUNT(*) FROM user_search_queries")).scalar()
+            or 0
+        )
+        setting_count = (
+            session.execute(text("SELECT COUNT(*) FROM user_settings")).scalar() or 0
+        )
+
+    # Confirmation prompt (unless --yes)
+    if not yes:
+        if keep_companies:
+            msg = (
+                f"This will delete {posting_count} postings, {label_count} labels, "
+                f"{model_count} classifier models, and {crawl_count} crawl runs "
+                f"(keeping {company_count} companies, {watchlist_count} watchlist items, "
+                f"{search_count} search queries, and {setting_count} settings). "
+                f"Type 'reset' to confirm"
+            )
+        else:
+            msg = (
+                f"This will delete ALL data including {company_count} companies, "
+                f"{watchlist_count} watchlist items, {search_count} search queries, "
+                f"and {setting_count} settings, plus {posting_count} postings, "
+                f"{label_count} labels, {model_count} classifier models, "
+                f"and {crawl_count} crawl runs. Type 'reset' to confirm"
+            )
+
+        answer = click.prompt(msg, default="", show_default=False)
+        if answer != "reset":
+            click.echo("Aborted.")
+            sys.exit(1)
+
+    # Remove classifier .pkl files
+    pkl_count = 0
+    for pkl_file in _MODELS_DIR.glob("classifier_*.pkl"):
+        pkl_file.unlink()
+        click.echo(f"Removed model file: {pkl_file.name}")
+        pkl_count += 1
+
+    # Delete from database
+    if keep_companies:
+        # FK-safe order: children before parents
+        delete_tables = [
+            ("user_posting_state", "labels"),
+            ("user_similarity_scores", "similarity scores"),
+            ("user_classifier_scores", "classifier scores"),
+            ("user_enriched_postings", "enriched postings"),
+            ("user_ranking_scores", "ranking scores"),
+            ("job_posting_locations", "posting locations"),
+            ("job_postings", "postings"),
+            ("classifier_versions", "classifier versions"),
+            ("crawl_runs", "crawl runs"),
+        ]
+
+        with session_scope(engine=engine) as session:
+            for table, label in delete_tables:
+                result = session.execute(text(f"DELETE FROM {table}"))
+                count = result.rowcount  # type: ignore[attr-defined]
+                click.echo(f"Deleted {count} {label}")
+    else:
+        # Full reset: drop all, recreate, then re-seed via init_db
+        Base.metadata.drop_all(engine)
+        init_db(db_path)
+        click.echo("All tables dropped and recreated.")
+        click.echo("Default user re-seeded.")
+
+    click.echo(f"Removed {pkl_count} classifier model file(s) from {_MODELS_DIR}")
 
 
 if __name__ == "__main__":
