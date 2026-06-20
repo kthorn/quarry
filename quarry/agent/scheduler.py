@@ -7,11 +7,13 @@ Usage:
 import asyncio
 import csv
 import logging
+import sys
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
+from tqdm import tqdm
 
 from quarry.config import CompanyFilterConfig, FiltersConfig, settings
 from quarry.crawlers import get_crawler
@@ -348,7 +350,14 @@ def run_once(db: Database, user_id: int = 1) -> dict:
             }
         )
 
-    for company in companies:
+    progress = tqdm(
+        companies,
+        desc="Crawling",
+        unit="co",
+        disable=not sys.stderr.isatty(),
+    )
+    for company in progress:
+        progress.set_description(f"Crawling {company.name}")
         log.info(
             "[%d/%d] Crawling %s...",
             companies_crawled + companies_errored + 1,
@@ -419,6 +428,12 @@ def run_once(db: Database, user_id: int = 1) -> dict:
                 company_new,
                 company_dupes,
                 company_filtered,
+            )
+            progress.set_postfix(
+                found=len(postings),
+                new=company_new,
+                dupes=company_dupes,
+                filt=company_filtered,
             )
         except Crawl404Error:
             log.warning("ATS 404 for %s — resetting ats_type to unknown", company.name)
