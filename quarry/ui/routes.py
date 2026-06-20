@@ -53,7 +53,7 @@ def postings():
     body_q = request.args.get("body_q", "")
 
     show_all = request.args.get("show_all") == "1"
-    show_all_param = request.args.get("show_all", "")
+    show_all_param = request.args.get("show_all") or None
 
     db = get_db()
     per_page = current_app.config["PER_PAGE"]

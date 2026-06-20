@@ -862,17 +862,6 @@ class TestReadTimeBadges:
         assert "badge-unknown" in html
         assert "work: unknown (generous)" in html
 
-    def test_badge_work_miss_present(self, app_with_location_filter):
-        """filter_active + work_type_match=False -> badge-work-miss."""
-        # Irvine is onsite with SF-only + strict -> work_type_match should be True
-        # (targets_set=True, onsite -> work_type_match=True).
-        # Work miss happens when, e.g., accept_remote=True + targets_set=True
-        # and an onsite posting in a wrong location. Let's set up:
-        # Config: SF targets + accept_remote=True, strict.
-        # then remote is match, onsite in Irvine is work_type_match=True but location fails.
-        # Actually, work_type_match=False is for: accept_remote=False with remote posting.
-        pass  # We'll test badge-work-miss via a different scenario
-
     def test_badge_work_miss_with_remote_refused(self, app, tmp_path):
         """accept_remote=False + remote posting -> work_type_match=False."""
         db = Database(tmp_path / "test.db")
