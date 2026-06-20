@@ -60,7 +60,7 @@ def test_company_filter_config_defaults():
 def test_location_filter_config_defaults():
     config = LocationFilterConfig()
     assert config.target_location == []
-    assert config.accept_remote is True
+    assert config.accept_remote is False
     assert config.nearby_radius is None
     assert config.accept_states == []
     assert config.accept_regions == []
@@ -105,3 +105,29 @@ def test_settings_rejects_unknown_keys():
     """Verify extra='forbid' is set on Settings."""
     with pytest.raises(Exception):
         Settings(unknown_key="value")
+
+
+def test_normalize_config_idempotent():
+    """Calling normalize_config twice on the same config should not
+    duplicate resolved entries."""
+    config = LocationFilterConfig(
+        target_location=["San Francisco, CA"],
+        accept_states=["NY"],
+        accept_regions=["US-West"],
+        nearby_radius=50,
+    )
+    config.normalize_config()
+    first_cities = set(config._resolved_cities)
+    first_states = set(config._resolved_states)
+    first_regions = set(config._resolved_regions)
+    first_coords_len = len(config._resolved_target_coords)
+    first_states_accept = set(config._resolved_states_from_accept)
+    first_regions_accept = set(config._resolved_regions_from_accept)
+
+    config.normalize_config()
+    assert set(config._resolved_cities) == first_cities
+    assert set(config._resolved_states) == first_states
+    assert set(config._resolved_regions) == first_regions
+    assert len(config._resolved_target_coords) == first_coords_len
+    assert set(config._resolved_states_from_accept) == first_states_accept
+    assert set(config._resolved_regions_from_accept) == first_regions_accept

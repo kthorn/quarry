@@ -7,6 +7,7 @@ from quarry.config import (
     CompanyFilterConfig,
     KeywordBlocklistConfig,
     LocationFilterConfig,
+    NoneStrictness,
     TitleKeywordConfig,
 )
 from quarry.models import (
@@ -22,6 +23,8 @@ from quarry.pipeline.filter import (
     LocationFilter,
     TitleKeywordFilter,
     cosine_similarity,
+    evaluate_location_match,
+    geographic_match,
     score_similarity,
 )
 
@@ -682,8 +685,292 @@ class TestLocationFilterHaversine:
 
 class TestFilterSteps:
     def test_filter_steps_list_exists(self):
-        assert len(FILTER_STEPS) == 4
+        assert len(FILTER_STEPS) == 3
         assert isinstance(FILTER_STEPS[0], KeywordBlocklistFilter)
         assert isinstance(FILTER_STEPS[1], TitleKeywordFilter)
         assert isinstance(FILTER_STEPS[2], CompanyFilter)
-        assert isinstance(FILTER_STEPS[3], LocationFilter)
+        # LocationFilter removed from FILTER_STEPS (now at read-time)
+
+
+# ── evaluate_location_match truth-table tests ─────────────────────
+
+
+class TestEvaluateLocationMatch:
+    """Truth-table tests for the read-time location + work-model filter."""
+
+    def _config(self, **kwargs):
+        from quarry.config import LocationFilterConfig
+
+        c = LocationFilterConfig(**kwargs)
+        c.normalize_config()
+        return c
+
+    def test_filter_off_no_target_no_remote(self):
+        config = self._config(target_location=[], accept_remote=False)
+        result = evaluate_location_match("San Francisco, CA", "onsite", config)
+        assert result.filter_active is False
+        assert result.work_type_match is True
+        assert result.location_relevant is False
+        assert result.location_match is True
+        assert result.passes is True
+
+    def test_filter_off_config_none(self):
+        result = evaluate_location_match("Anywhere", "onsite", None)
+        assert result.filter_active is False
+        assert result.work_type_match is True
+        assert result.location_relevant is False
+        assert result.location_match is True
+        assert result.passes is True
+
+    def test_filter_off_none_work_model(self):
+        config = self._config(target_location=[], accept_remote=False)
+        result = evaluate_location_match("Anywhere", None, config)
+        assert result.filter_active is False
+        assert result.work_type_match is True
+        assert result.location_relevant is False
+        assert result.location_match is True
+        assert result.passes is True
+
+    def test_onsite_location_matches(self):
+        config = self._config(
+            target_location=["San Francisco, CA"], accept_remote=False
+        )
+        result = evaluate_location_match("San Francisco, CA", "onsite", config)
+        assert result.filter_active is True
+        assert result.work_type_match is True
+        assert result.location_relevant is True
+        assert result.location_match is True
+        assert result.passes is True
+
+    def test_onsite_location_does_not_match(self):
+        config = self._config(
+            target_location=["San Francisco, CA"], accept_remote=False
+        )
+        result = evaluate_location_match("New York, NY", "onsite", config)
+        assert result.filter_active is True
+        assert result.work_type_match is True
+        assert result.location_relevant is True
+        assert result.location_match is False
+        assert result.passes is False
+
+    def test_hybrid_location_matches(self):
+        config = self._config(
+            target_location=["San Francisco, CA"], accept_remote=False
+        )
+        result = evaluate_location_match("San Francisco, CA", "hybrid", config)
+        assert result.filter_active is True
+        assert result.work_type_match is True
+        assert result.location_relevant is True
+        assert result.location_match is True
+        assert result.passes is True
+
+    def test_hybrid_location_does_not_match(self):
+        config = self._config(
+            target_location=["San Francisco, CA"], accept_remote=False
+        )
+        result = evaluate_location_match("New York, NY", "hybrid", config)
+        assert result.filter_active is True
+        assert result.work_type_match is True
+        assert result.location_relevant is True
+        assert result.location_match is False
+        assert result.passes is False
+
+    def test_remote_any_location(self):
+        config = self._config(target_location=["San Francisco, CA"], accept_remote=True)
+        result = evaluate_location_match("Timbuktu", "remote", config)
+        assert result.filter_active is True
+        assert result.work_type_match is True
+        assert result.location_relevant is False
+        assert result.location_match is True
+        assert result.passes is True
+
+    def test_remote_accept_remote_false(self):
+        config = self._config(
+            target_location=["San Francisco, CA"], accept_remote=False
+        )
+        result = evaluate_location_match("San Francisco, CA", "remote", config)
+        assert result.filter_active is True
+        assert result.work_type_match is False
+        assert result.location_relevant is False
+        assert result.location_match is True
+        assert result.passes is False
+
+    def test_none_matches_both_strictnesses(self):
+        config_g = self._config(
+            target_location=["San Francisco, CA"],
+            accept_remote=False,
+            none_strictness=NoneStrictness.GENEROUS,
+        )
+        result_g = evaluate_location_match("San Francisco, CA", None, config_g)
+        assert result_g.passes is True
+        assert result_g.work_type_match is True
+        config_s = self._config(
+            target_location=["San Francisco, CA"],
+            accept_remote=False,
+            none_strictness=NoneStrictness.STRICT,
+        )
+        result_s = evaluate_location_match("San Francisco, CA", None, config_s)
+        assert result_s.passes is True
+        assert result_s.work_type_match is True
+
+    def test_none_no_match_generous_passes(self):
+        config = self._config(
+            target_location=["San Francisco, CA"],
+            accept_remote=False,
+            none_strictness=NoneStrictness.GENEROUS,
+        )
+        result = evaluate_location_match("New York, NY", None, config)
+        assert result.filter_active is True
+        assert result.work_type_match is True
+        assert result.location_relevant is False  # generous: location ignored
+        assert result.passes is True
+
+    def test_none_no_match_strict_fails(self):
+        config = self._config(
+            target_location=["San Francisco, CA"],
+            accept_remote=False,
+            none_strictness=NoneStrictness.STRICT,
+        )
+        result = evaluate_location_match("New York, NY", None, config)
+        assert result.filter_active is True
+        assert result.work_type_match is True  # strict: targets_set=True
+        assert result.passes is False
+
+    def test_none_unparseable_generous_passes(self):
+        config = self._config(
+            target_location=["San Francisco, CA"],
+            accept_remote=False,
+            none_strictness=NoneStrictness.GENEROUS,
+        )
+        result = evaluate_location_match("asdf qwerty zxcv", None, config)
+        assert result.filter_active is True
+        assert result.work_type_match is True
+        assert result.location_relevant is False  # generous: location ignored
+        assert result.passes is True
+
+    def test_none_unparseable_strict_fails(self):
+        config = self._config(
+            target_location=["San Francisco, CA"],
+            accept_remote=False,
+            none_strictness=NoneStrictness.STRICT,
+        )
+        result = evaluate_location_match("asdf qwerty zxcv", None, config)
+        assert result.filter_active is True
+        assert (
+            result.work_type_match is True
+        )  # strict: targets_set=True -> treat like in-person
+        assert result.location_relevant is True
+        assert result.passes is False
+
+    def test_remote_only_prefs_onsite_fails(self):
+        config = self._config(target_location=[], accept_remote=True)
+        result = evaluate_location_match("San Francisco, CA", "onsite", config)
+        assert result.filter_active is True
+        assert result.work_type_match is False
+        assert result.location_relevant is False
+        assert result.location_match is True
+        assert result.passes is False
+
+    def test_remote_only_prefs_none_generous_passes(self):
+        config = self._config(
+            target_location=[],
+            accept_remote=True,
+            none_strictness=NoneStrictness.GENEROUS,
+        )
+        result = evaluate_location_match("Anywhere", None, config)
+        assert result.filter_active is True
+        assert result.work_type_match is True
+        assert result.passes is True
+
+    def test_does_not_mutate_config(self):
+        config = self._config(
+            target_location=["San Francisco, CA"],
+            accept_states=["NY"],
+            accept_regions=["US-West"],
+        )
+        cities_before = set(config._resolved_cities)
+        states_before = set(config._resolved_states)
+        regions_before = set(config._resolved_regions)
+        coords_before = list(config._resolved_target_coords)
+        states_accept_before = set(config._resolved_states_from_accept)
+        regions_accept_before = set(config._resolved_regions_from_accept)
+        evaluate_location_match("New York, NY", "onsite", config)
+        evaluate_location_match("San Francisco, CA", "hybrid", config)
+        evaluate_location_match("Remote", "remote", config)
+        assert set(config._resolved_cities) == cities_before
+        assert set(config._resolved_states) == states_before
+        assert set(config._resolved_regions) == regions_before
+        assert list(config._resolved_target_coords) == coords_before
+        assert set(config._resolved_states_from_accept) == states_accept_before
+        assert set(config._resolved_regions_from_accept) == regions_accept_before
+
+
+# ── geographic_match unit tests ────────────────────────────────────
+
+
+class TestGeographicMatch:
+    def _config(self, **kwargs):
+        from quarry.config import LocationFilterConfig
+
+        c = LocationFilterConfig(**kwargs)
+        c.normalize_config()
+        return c
+
+    def test_city_match(self):
+        config = self._config(target_location=["San Francisco, CA"])
+        sf_loc = ParsedLocation(
+            canonical_name="San Francisco, CA",
+            city="San Francisco",
+            state_code="CA",
+            region="US-West",
+        )
+        pr = ParseResult(work_model=None, locations=[sf_loc])
+        assert geographic_match(pr, config) is True
+
+    def test_nearby_radius_match(self):
+        config = self._config(target_location=["San Francisco, CA"], nearby_radius=50)
+        oakland = ParsedLocation(
+            canonical_name="Oakland, CA",
+            city="Oakland",
+            state_code="CA",
+            region="US-West",
+            latitude=37.8044,
+            longitude=-122.2712,
+        )
+        pr = ParseResult(work_model=None, locations=[oakland])
+        assert geographic_match(pr, config) is True
+
+    def test_state_match(self):
+        config = self._config(accept_states=["NY"])
+        ny_loc = ParsedLocation(
+            canonical_name="New York, NY",
+            city="New York",
+            state_code="NY",
+            region="US-East",
+        )
+        pr = ParseResult(work_model=None, locations=[ny_loc])
+        assert geographic_match(pr, config) is True
+
+    def test_region_match(self):
+        config = self._config(accept_regions=["US-West"])
+        portland = ParsedLocation(
+            canonical_name="Portland, OR",
+            city=None,
+            state_code="OR",
+            region="US-West",
+        )
+        pr = ParseResult(work_model=None, locations=[portland])
+        assert geographic_match(pr, config) is True
+
+    def test_no_match(self):
+        config = self._config(
+            target_location=["San Francisco, CA"], accept_remote=False
+        )
+        ny_loc = ParsedLocation(
+            canonical_name="New York, NY",
+            city="New York",
+            state_code="NY",
+            region="US-East",
+        )
+        pr = ParseResult(work_model=None, locations=[ny_loc])
+        assert geographic_match(pr, config) is False

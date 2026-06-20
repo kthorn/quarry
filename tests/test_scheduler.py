@@ -12,6 +12,7 @@ from quarry.config import (
     CompanyFilterConfig,
     FiltersConfig,
     KeywordBlocklistConfig,
+    LocationFilterConfig,
 )
 from quarry.crawlers.jobspy_client import JobSpyCompanyHints
 from quarry.models import Company, RawPosting, UserWatchlistItem
@@ -206,6 +207,34 @@ class TestProcessPosting:
             raw, db, "TestCorp", None, ideal_embedding
         )
         assert status2 == "duplicate"
+
+    def test_ingest_no_longer_filters_location(self, db):
+        """A posting that the old LocationFilter would have rejected
+        now passes ingest (location filtering moved to read-time)."""
+        config = FiltersConfig(
+            location_filter=LocationFilterConfig(
+                target_location=["San Francisco, CA"],
+                accept_remote=False,
+            )
+        )
+        config.normalize_config()
+        raw = RawPosting(
+            company_id=1,
+            title="Backend Engineer",
+            url="https://example.com/job/irvine",
+            description="Build APIs",
+            location="Irvine, CA",
+            source_type="test",
+        )
+        ideal_embedding = np.ones(384, dtype=np.float32)
+        ideal_embedding = ideal_embedding / np.linalg.norm(ideal_embedding)
+        posting, status, similarity, parse_result = _process_posting(
+            raw, db, "TestCorp", config, ideal_embedding
+        )
+        # Ingest no longer filters by location -> status is 'new'
+        assert status == "new"
+        assert posting is not None
+        assert similarity >= 0.0
 
 
 class TestResolveOrCreateSearchCompany:

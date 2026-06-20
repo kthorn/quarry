@@ -1,3 +1,4 @@
+from enum import Enum
 from pathlib import Path
 from typing import Literal
 
@@ -20,12 +21,18 @@ class CompanyFilterConfig(BaseModel):
     deny: list[str] = []
 
 
+class NoneStrictness(str, Enum):
+    GENEROUS = "generous"  # None work_model -> assume acceptable
+    STRICT = "strict"  # None work_model -> require location match + targets
+
+
 class LocationFilterConfig(BaseModel):
     target_location: list[str] = []
-    accept_remote: bool = True
+    accept_remote: bool = False
     nearby_radius: int | None = None
     accept_states: list[str] = []
     accept_regions: list[str] = []
+    none_strictness: NoneStrictness = NoneStrictness.GENEROUS
 
     _resolved_cities: set[str] = PrivateAttr(default_factory=set)
     _resolved_states: set[str] = PrivateAttr(default_factory=set)
@@ -38,6 +45,14 @@ class LocationFilterConfig(BaseModel):
 
     def normalize_config(self) -> None:
         from quarry.pipeline.locations import parse_location
+
+        # Reset all resolved fields to empty defaults for idempotency
+        self._resolved_cities = set()
+        self._resolved_states = set()
+        self._resolved_regions = set()
+        self._resolved_target_coords = []
+        self._resolved_states_from_accept = set()
+        self._resolved_regions_from_accept = set()
 
         for entry in self.target_location:
             result = parse_location(entry)

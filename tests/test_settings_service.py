@@ -214,7 +214,7 @@ class TestLocationFilter:
         result = svc.get_location_filter()
         assert result is not None
         assert result.target_location == []
-        assert result.accept_remote is True
+        assert result.accept_remote is False
 
 
 # ── JobSpy Config ─────────────────────────────────────────────────
