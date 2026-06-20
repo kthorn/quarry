@@ -1,12 +1,14 @@
 # STATUS
 
-Last updated: 2026-06-19 (interactive title/body filters on postings page)
+Last updated: 2026-06-19 (read-time location/work filter, ingest logging, scoped DB reset)
 
 ## In Progress
 
 _(none)_
 
 ## Recent Updates
+
+- **Read-time location + work-model filter, ingest logging, scoped DB reset** (2026-06-19): moved location/work-model filtering from ingest to **read time** (per-user, preference-based) via a new `evaluate_location_match()` classifier in `quarry/pipeline/filter.py` — the single source of truth for both hiding postings and rendering two per-posting badges (work-type match, location match). `LocationFilter` removed from ingest `FILTER_STEPS` (class retained, matching loop extracted into a shared `geographic_match` helper). New `none_strictness` setting (generous/strict) controls how `work_model=None` postings are treated. `accept_remote` default changed True→False (intentional migration: an unconfigured user now sees everything; explicitly-saved values are preserved). `normalize_config()` made idempotent. `/postings` default view hides `passes=False` rows via a fetch-until-full post-query loop; `?show_all=1` shows all with badges (exact pagination escape hatch). `show_all` forwarded through every link/form. Settings route round-trips `none_strictness` with empty-string fallback. Per-filter aggregate `Ingest filter summary:` log line in `scheduler.run_once`. New `python -m quarry.store reset [--keep-companies] [--yes]` CLI command for a clean restart (preserves companies/watchlist/search queries/settings in keep-companies mode; deletes posting-derived tables + classifier versions + `.pkl` models). Known limitation: page-based offset + post-filter → possible duplicate visible rows across pages; `show_all=1` is the exact-pagination path. Design spec: `docs/superpowers/specs/2026-06-19-expose-workmodel-location-reset-design.md` (refined via pi-refine, 6 iterations across 3 models). 607 tests passing.
 
 - **Interactive title/body filters** (2026-06-19): replaced the single combined `q` search box on `/postings` with separate **Title contains** and **Description contains** text inputs that update the list live via HTMX (`keyup changed delay:300ms`). `get_postings_with_scores()` gained `title_search` / `body_search` params (ANDed; legacy `search` OR kept for backward compat). New `postings_results.html` partial rendered for `HX-Request: true` requests; full page otherwise. HTMX 1.9.12 (SRI-pinned) added to `base.html`. All label/retrain/scan/pagination links preserve both filters. Design spec: `docs/superpowers/specs/2026-06-16-interactive-title-body-filters-design.md`. 555 tests passing.
 

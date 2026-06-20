@@ -28,6 +28,9 @@ class NoneStrictness(str, Enum):
 
 class LocationFilterConfig(BaseModel):
     target_location: list[str] = []
+    # Default False (was True). Under the read-time filter (evaluate_location_match),
+    # filter_active = targets_set or accept_remote — a True default with empty targets
+    # would silently hide all onsite/hybrid postings. See spec "Config default change".
     accept_remote: bool = False
     nearby_radius: int | None = None
     accept_states: list[str] = []

@@ -552,9 +552,11 @@ def settings_location():
     states_text = request.form.get("accept_states", "")
     regions_text = request.form.get("accept_regions", "")
 
-    # Preserve existing none_strictness unless explicitly changed
+    # Preserve existing none_strictness unless explicitly changed.
+    # Use `or "generous"` (not a default arg) so an empty-string value also
+    # falls back — NoneStrictness("") would raise ValueError and 500 the page.
     if "none_strictness" in request.form:
-        none_strictness_raw = request.form.get("none_strictness", "generous")
+        none_strictness_raw = request.form.get("none_strictness") or "generous"
     else:
         existing = ss.get_location_filter()
         if existing is not None:

@@ -1057,3 +1057,21 @@ class TestSettingsNoneStrictnessRoundTrip:
         html = response.data.decode()
         # strict should still be selected (not reset to generous)
         assert 'value="strict" selected' in html
+
+    def test_none_strictness_empty_string_falls_back_to_generous(self, app, tmp_path):
+        """A POST with none_strictness='' (misconfigured client) must not 500.
+
+        NoneStrictness("") raises ValueError; the route must fall back to
+        generous instead of crashing.
+        """
+        client = app.test_client()
+        response = client.post(
+            "/settings/location",
+            data={"target_location": "San Francisco, CA", "none_strictness": ""},
+        )
+        # Must not 500 — a redirect (302) to the settings page is the success path
+        assert response.status_code == 302
+        # And the saved value should be generous (the fallback)
+        get_resp = client.get("/settings?section=location")
+        assert get_resp.status_code == 200
+        assert 'value="generous" selected' in get_resp.data.decode()
