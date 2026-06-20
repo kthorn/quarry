@@ -1,171 +1,317 @@
-# Expose work_model + location-match status, and scoped DB reset
+# Per-user read-time location/work filter, ingest logging, and scoped DB reset
 
 **Date:** 2026-06-19
 **Status:** Approved (pending spec review)
-**Context:** Early exploratory phase. The postings feed is polluted with
-location/work-model mismatches that slipped through the ingest filter or
-predate the current filter logic, and the UI gives no way to *see* why a
-posting is there. This spec ships legibility (make the data visible) and a
-scoped DB reset (clean slate). It deliberately does **not** change filter
-logic, add display-time *filtering*, or touch the classifier — those are
-follow-ups once the data is legible.
+**Context:** Early exploratory phase. The postings feed carries location/work
+mismatches that the *ingest* filter either let through or generated under older
+filter logic, and the UI applies no filtering at read time — so leaks persist
+forever regardless of config changes. This spec moves location/work filtering
+to the read path (multi-user-correct), makes the filter decision visible per
+posting via two badges, adds per-filter ingest logging so we can see what's
+being tossed, and ships a scoped DB reset for a clean restart.
+
+## Architectural decision: split filters by intent
+
+Two kinds of filters serve different purposes and belong at different layers:
+
+- **Ingest-time (universal, content-based):** `KeywordBlocklistFilter`,
+  `TitleKeywordFilter`, `CompanyFilter`. Drop postings *no one* on this
+  instance would want, before the expensive embedding step. Kept at ingest
+  to avoid paying embedding compute on obvious spam. Unchanged from today.
+- **Read-time (per-user, preference-based):** `LocationFilter`, now
+  including work-model. Applied in the `/postings` query, per user. Removed
+  from `FILTER_STEPS` / `_process_posting`.
+
+**Why:** with N users having different location/work preferences, ingest-time
+filtering against one user's config is wrong by construction. Moving
+preference filters to read time means (a) changing preferences instantly
+reclassifies the corpus without re-crawling, (b) the DB becomes a pure
+superset of everyone's interest with each user's view a projection, (c) the
+badges shown to a user always agree with that user's actual filter — no
+display-vs-ingest divergence.
+
+**Consequence (accepted):** postings that *would* have been location-filtered
+at ingest now get embedded and stored. Storage + embedding compute go up; the
+DB accumulates postings no current user wants. Kurt confirmed this is
+acceptable for now. A TTL to retire stale postings is tracked separately in
+GitHub issue #7.
 
 ## Goal
 
-1. Make every posting card show its work model (including `None` → "unknown")
-   and whether its location matches the configured location filter.
-2. Provide a `reset` CLI command with a `--keep-companies` mode that wipes
-   posting-derived data (including labels and classifier models) while
-   preserving companies, watchlist, search queries, and user settings.
+1. Move location + work-model filtering from ingest to read-time (per-user).
+2. Show two badges per posting: work-type match and location match.
+3. Add per-filter aggregate ingest logging (how many removed by each filter).
+4. Provide a `reset` CLI command with `--keep-companies` mode for a clean
+   restart that preserves companies, watchlist, search queries, and settings.
 
 ## Non-goals (follow-up work)
 
-- Changing `LocationFilter.check` logic (`None`-bypass, ANY-vs-ALL semantics).
-- Display-time *filtering* (hiding mismatches). This spec only *shows* status.
+- Changing the ingest-time filters (`KeywordBlocklistFilter`,
+  `TitleKeywordFilter`, `CompanyFilter`) — they stay as-is.
+- TTL / retirement of stale postings (issue #7).
 - Classifier feature enrichment (separate title/body embeddings, structured
   features).
 - Re-seeding companies or reloading search queries inside `reset`.
-
-## Background: why the UI shows leaks
-
-Filters run **once, at ingest time**, inside `scheduler._process_posting`
-(`quarry/agent/scheduler.py:220`) via `FILTER_STEPS`. The `/postings` route
-(`quarry/ui/routes.py:43`) calls `db.get_postings_with_scores(...)` and renders
-rows directly — it applies **no** filter logic. So postings that survived an
-older (or absent) filter config remain visible forever; changing the filter
-today fixes future ingests but not the 1808 rows already in the DB. This spec
-does not fix that gap; it makes it visible.
+- Multi-user retirement (per-user TTL). Single global TTL to start, later.
 
 ---
 
-## Component 1: location-match indicator
+## Component 1: read-time location + work-model filter
 
-### Behavior
+### The truth table
 
-On each posting card, next to the existing location/work_model badges, show a
-badge indicating whether the posting matches the configured location filter:
+Two user-preference inputs (both already in config, no new work-type list):
 
-| Status | Badge | When |
-|---|---|---|
-| `match` | `✓ location match` (green) | `LocationFilter.check` returns `passed=True` **and** the pass was due to a geographic match (not the remote-bypass and not the "no filter configured" early return). |
-| `mismatch` | `✗ location mismatch` (red) | `LocationFilter.check` returns `passed=False`. |
-| `unknown` | `? location unknown` (grey) | `LocationFilter.check` returns `passed=True` via the remote-bypass (`accept_remote` + `work_model == "remote"`) **or** via the "no filter configured" early return (`target_location`, `accept_states`, `accept_regions` all empty) **or** there are no parseable locations. |
+- **Accept remote?** (`accept_remote`, already on `LocationFilterConfig`)
+- **Have target locations?** (implied by `target_location` being non-empty →
+  means the user is open to in-person/hybrid there)
 
-The three-way status is required (rather than just pass/fail) because the
-current filter has legitimate "pass but we're not sure why" paths — the
-remote-bypass and the no-filter-configured case. Collapsing those to "match"
-would paint a sea of green that hides the leaks; collapsing to "mismatch"
-would flag remote postings as bad. The `unknown` bucket makes the ambiguity
-visible, which is the whole point of this exploratory work.
+Posting inputs:
 
-### Implementation
+- `work_model`: `onsite` / `hybrid` / `remote` / `None`
+- location: matches a target / doesn't / unparseable
 
-Add a single helper in `quarry/pipeline/filter.py`, next to `LocationFilter`:
+A new setting controls how `work_model=None` is treated:
+
+- **Generous** (default): assume `None` is acceptable — pass regardless of
+  location. (This preserves current behavior for users with no opinion.)
+- **Strict**: `None` is never acceptable on the work-type axis — fail unless
+  location matches *and* the user has target locations set (i.e. treat `None`
+  like an in-person posting for location purposes, but flag the work-type
+  badge as a miss).
+
+Full truth table (pass = shown by default; fail = hidden unless "show all"):
+
+| posting work_model | location | generous None | strict None |
+|---|---|---|---|
+| onsite | matches | ✅ pass | ✅ pass |
+| onsite | doesn't match | ❌ fail | ❌ fail |
+| hybrid | matches | ✅ pass | ✅ pass |
+| hybrid | doesn't match | ❌ fail | ❌ fail |
+| remote | *anything* | ✅ pass (loc ignored) | ✅ pass (loc ignored) |
+| None | matches | ✅ pass | ✅ pass |
+| None | doesn't match | ✅ pass (generous) | ❌ fail (strict) |
+| None | unparseable | ✅ pass (generous) | ❌ fail (strict) |
+
+"Wanted work types" derived from existing config, no new list:
+`wanted = ({remote} if accept_remote) ∪ ({onsite, hybrid} if target_location
+set)`. So:
+
+- "remote-only" = `accept_remote=true, no target_location`
+- "in-person SF only" = `target_location=[SF], accept_remote=false`
+- "either" = both set
+- "neither" (no target, `accept_remote=false`) → nothing passes; the filter
+  is effectively off and the read path shows everything with badges hidden.
+
+### Implementation: a single classifier function
+
+Add `quarry/pipeline/filter.py`:
 
 ```python
-def location_match_status(
-    posting: JobPosting,
-    location_filter_config: LocationFilterConfig | None,
-) -> Literal["match", "mismatch", "unknown"]:
-    """Classify a posting against the configured location filter.
+class LocationMatchResult(BaseModel):
+    work_type_match: bool       # does the posting's work_model fit user prefs?
+    location_match: bool        # does a parsed location hit a target?
+    location_relevant: bool     # is location even considered? (False for remote)
+    passes: bool                # overall: should this be shown by default?
 
-    Reuses LocationFilter.check so the indicator always agrees with the
-    ingest filter. Returns "unknown" when the filter passes for
-    non-geographic reasons (remote-bypass, no filter configured) or when
-    no locations are parseable.
+def evaluate_location_match(
+    posting: JobPosting,
+    config: LocationFilterConfig | None,
+) -> LocationMatchResult:
+    """Apply the location+work-model truth table for a user.
+
+    This is the single source of truth for read-time filtering AND for the
+    badges — the UI shows exactly what this function decided.
     """
 ```
 
-The helper:
+Logic:
 
-1. Returns `"unknown"` immediately if `location_filter_config` is `None` or
-   has no `target_location`/`accept_states`/`accept_regions` (mirrors the
-   `LocationFilter.check` early return at `filter.py:152-157`).
-2. Returns `"unknown"` if `posting.work_model == "remote"` and
-   `config.accept_remote` (mirrors the remote-bypass at `filter.py:163-171`).
-3. Re-parses `posting.location` via `parse_location`. Returns `"unknown"` if
-   there are no parsed locations (mirrors `filter.py:172-173`).
-4. Calls `LocationFilter().check(...)` with a synthetic `RawPosting` (only
-   `.title`/`.location`/`.description` are read by `LocationFilter`) and
-   returns `"match"` if `passed`, `"mismatch"` otherwise.
+1. If `config` is `None` or has no `target_location`/`accept_states`/
+   `accept_regions` **and** `accept_remote` is false → filter is off.
+   Return `passes=True, location_relevant=False, work_type_match=True,
+   location_match=True` (badges hidden — nothing to match against).
+2. If `config` is `None` but `accept_remote` is true and no target locations
+   → only remote is wanted. Treat as "remote-only" preference.
+3. Work-type axis:
+   - `work_model == "remote"` → `work_type_match = config.accept_remote`.
+   - `work_model in ("onsite", "hybrid")` → `work_type_match = bool(target
+     locations set)` (in-person/hybrid wanted only if user has targets).
+   - `work_model is None` → generous: `work_type_match = True`; strict:
+     `work_type_match = bool(target locations set)` (same as in-person).
+4. Location axis (only `location_relevant` when work-type is non-remote and
+   the user has targets):
+   - `work_model == "remote"` and `accept_remote` → `location_relevant =
+     False`, `location_match = True` (location irrelevant for remote).
+   - Otherwise `location_relevant = True`. Re-parse `posting.location` via
+     `parse_location`. `location_match = True` if any parsed location hits
+     `LocationFilter`'s geographic match (reuse `LocationFilter.check`'s
+     city/`nearby_radius`/state/region logic — see "Reuse" below).
+   - No parseable locations → `location_match = False` under strict, `True`
+     under generous (can't prove it's wrong, be generous).
+5. `passes = work_type_match AND (location_match OR NOT location_relevant)`.
 
-Step 4 is the key reuse: by the time we reach it, we've already excluded the
-non-geographic pass paths, so a `passed=True` here is guaranteed to be a
-genuine geographic match, and `passed=False` is a genuine mismatch. This
-keeps the matching logic in exactly one place (`LocationFilter`).
+**Reuse of `LocationFilter`'s geographic matching:** rather than duplicate the
+city/`nearby_radius`/`accept_states`/`accept_regions` matching in
+`evaluate_location_match`, the function constructs a `LocationFilterConfig`
+with only the geographic fields, calls `LocationFilter().check(...)` with a
+synthetic `RawPosting` carrying the posting's title/location/description, and
+interprets `passed=True` as `location_match=True`. This keeps geographic
+matching in exactly one place (`LocationFilter`), so any future fix to that
+logic updates both the (now read-time) filter and the badges. The synthetic
+`RawPosting` is needed because `LocationFilter.check` reads `raw.title` /
+`raw.location` / `raw.description` (the `KeywordBlocklistFilter` does, but
+`LocationFilter` reads only `raw.location` and `raw.title` for logging —
+verified).
 
-`LocationFilterConfig` must be `normalize_config()`-ed before use (it resolves
-the `_resolved_cities`/`_resolved_target_coords`/etc. private attrs in place).
-The helper calls `normalize_config()` defensively if it hasn't been called;
-`normalize_config` is idempotent (it rebuilds the sets from the public fields).
+### New config: None-strictness
 
-### Wiring into the route
+Add to `LocationFilterConfig`:
+
+```python
+class NoneStrictness(str, Enum):
+    GENEROUS = "generous"   # None work_model → assume acceptable
+    STRICT = "strict"       # None work_model → require location match + targets
+
+class LocationFilterConfig(BaseModel):
+    # ... existing fields ...
+    none_strictness: NoneStrictness = NoneStrictness.GENEROUS
+```
+
+Default generous preserves current behavior. Editable from the Settings UI
+alongside the existing location filter fields (the Settings UI already has a
+Location Filter section — add a dropdown). Persisted via the existing
+`UserSettingsService.set_location_filter` path.
+
+### Read-time wiring
 
 In `postings()` (`quarry/ui/routes.py:43`):
 
-1. After fetching `results`, load the location filter config via the existing
-   `ss.get_location_filter()` call pattern (already used elsewhere in
-   `routes.py:327`). Fall back to `settings.filters.location_filter` if the
-   user setting is absent (same pattern as `scheduler.py:283-285`). Call
-   `normalize_config()` once.
-2. If a config exists, build a `JobPosting` shim per row (only `.location` and
-   `.work_model` are needed) and call `location_match_status(...)`, attaching
-   the result as `row["location_match"]`.
-3. If no config, set `row["location_match"] = None` for every row (template
-   hides the badge).
+1. Load the location filter config (`ss.get_location_filter()` with
+   `settings.filters.location_filter` fallback, same pattern as
+   `scheduler.py:283-285`). `normalize_config()` once.
+2. For each row in `results`, build a `JobPosting` shim (only `.location` and
+   `.work_model` needed) and call `evaluate_location_match(...)`. Attach
+   `work_type_match`, `location_match`, `location_relevant`, `passes` to the
+   row dict.
+3. **Default view: hide postings where `passes == False`.** Add a `show_all`
+   query param (`/postings?show_all=1`). When `show_all` is falsy, filter the
+   `results` list in Python (post-query) to rows where `passes` is true. When
+   `show_all=1`, show everything with badges visible.
+   - Rationale for post-query filtering in Python rather than SQL: the truth
+     table needs `parse_location` per row (geonamescache, in-memory) which
+     can't be pushed to SQL. Page size is small (≤ `PER_PAGE + 1`), so
+     over-fetching and filtering in Python is fine. Over-fetch factor: fetch
+     `per_page * K` rows (K=3 estimate) before filtering to keep pagination
+     roughly correct; document the approximation in a comment.
+4. Badges are rendered from the attached fields (Component 2).
 
-This is per-row work on a paginated result set (≤ `PER_PAGE + 1` rows), each
-involving one `parse_location` call (geonamescache is in-memory) and one
-`LocationFilter.check`. Cheap enough that no caching is warranted for the
-page sizes in use.
-
-### Template
-
-In `postings_results.html`, after the existing work_model badge, add:
-
-```html
-{% if row.location_match == "match" %}
-  <span class="badge badge-loc-match">✓ location match</span>
-{% elif row.location_match == "mismatch" %}
-  <span class="badge badge-loc-mismatch">✗ location mismatch</span>
-{% elif row.location_match == "unknown" %}
-  <span class="badge badge-loc-unknown">? location unknown</span>
-{% endif %}
-```
-
-Hidden entirely when `row.location_match is none`.
+**Ingest change:** remove `LocationFilter()` from `FILTER_STEPS` in
+`quarry/pipeline/filter.py`. The `FILTER_STEPS` list becomes
+`[KeywordBlocklistFilter(), TitleKeywordFilter(), CompanyFilter()]`. The
+`LocationFilter` class stays in the module (used by
+`evaluate_location_match`). Update `scheduler._process_posting` callers —
+the `filters_config` still carries `location_filter` for the remaining
+filters' configs but `LocationFilter` no longer runs at ingest. Existing
+ingest tests that assert location-filtering-at-ingest behavior need updating
+to assert read-time behavior instead.
 
 ---
 
-## Component 2: work_model badge for `None`
+## Component 2: two badges per posting
 
-### Behavior
+### Work-type badge
 
-Today `postings_results.html:8` renders the work_model badge only
-`{% if row.work_model %}`. Postings with `work_model=None` (1061/1808 in the
-current corpus) show no badge — the gap is invisible.
+| condition | badge |
+|---|---|
+| `work_type_match == True` and `work_model` in (remote/hybrid/onsite) | `<work_model>` (existing colored badge) |
+| `work_type_match == True` and `work_model is None` (generous) | `work: unknown (generous)` (grey) |
+| `work_type_match == False` (strict None, no targets) | `work: ✗` (red) |
+| filter off (no prefs) | hidden |
 
-Change: render a grey `unknown` badge when `work_model` is falsy.
+### Location badge
 
-### Template change
+| condition | badge |
+|---|---|
+| `location_relevant == False` (remote, or filter off) | hidden |
+| `location_match == True` | `✓ location` (green) |
+| `location_match == False` | `✗ location` (red) |
+
+### Template (`postings_results.html`)
+
+Replace the existing work_model badge block with:
 
 ```html
 {% if row.work_model %}
   <span class="badge badge-{{ row.work_model }}">{{ row.work_model }}</span>
+{% elif row.work_type_match %}
+  <span class="badge badge-unknown">work: unknown (generous)</span>
 {% else %}
-  <span class="badge badge-unknown">unknown</span>
+  <span class="badge badge-work-miss">work: ✗</span>
+{% endif %}
+{% if row.location_relevant %}
+  {% if row.location_match %}
+    <span class="badge badge-loc-match">✓ location</span>
+  {% else %}
+    <span class="badge badge-loc-miss">✗ location</span>
+  {% endif %}
 {% endif %}
 ```
 
+(When the filter is off, `work_type_match=True, location_relevant=False` →
+only the existing `work_model` badge for non-None, nothing extra. Matches the
+"filter off = badges hidden" rule.)
+
 ### CSS
 
-Add `.badge-unknown` (greyscale, matching existing badge style) and the three
-location-badge classes to the existing stylesheet. Reuse the existing
-`.badge` base; only color differs.
+Add `.badge-unknown`, `.badge-work-miss`, `.badge-loc-match`, `.badge-loc-miss`
+to the existing stylesheet, reusing the `.badge` base; only color differs.
 
 ---
 
-## Component 3: `reset` CLI command with `--keep-companies`
+## Component 3: per-filter ingest logging
+
+### What
+
+At the end of each scan run, log an aggregate breakdown of how many postings
+each ingest filter removed. Today only a single `total_filtered` counter
+exists (`scheduler.py:319`); the per-`skip_reason` counts are in the CSV log
+but not summarized.
+
+### Implementation
+
+In `scheduler.run_once`:
+
+1. Add a `Counter[str]` (`skip_reason_counts`) accumulated alongside
+   `total_filtered`. Increment it with `decision.skip_reason` whenever a
+   posting is filtered (both the company-crawl loop at ~`scheduler.py:404`
+   and the search-results loop).
+2. After both loops, log one summary line per filter:
+
+   ```
+   log.info("Ingest filter summary: %s", ", ".join(
+       f"{name}={count}" for name, count in sorted(skip_reason_counts.items())
+   ))
+   ```
+
+   Producing e.g. `Ingest filter summary: blocklist=12, company_deny=3,
+   title_keyword=45`. Also include in the existing per-run log.
+3. No CSV schema change (the per-row `skip_reason` column already exists).
+
+`skip_reason` values are already the filter `decision.skip_reason` strings:
+`blocklist`, `title_keyword`, `company_allow_skip`, `company_deny`. With
+`LocationFilter` removed from ingest, `location` will no longer appear —
+which is itself the point (location is no longer an ingest filter).
+
+### Why not a structured log / metrics table
+
+YAGNI. A single `log.info` summary line per run is enough to see what's being
+tossed during exploration. If we later want trend tracking, that's a separate
+metrics-table spec.
+
+---
+
+## Component 4: `reset` CLI command with `--keep-companies`
 
 ### Command
 
@@ -193,7 +339,7 @@ Added to `quarry/store/__main__.py` alongside the existing `init` /
 | `companies` | **keep** | delete |
 | `user_watchlist` | **keep** | delete |
 | `user_search_queries` | **keep** | delete |
-| `user_settings` (ideal role, etc.) | **keep** | delete |
+| `user_settings` (ideal role, location filter, etc.) | **keep** | delete |
 | `users` (default user row) | **keep** | delete |
 | `pipeline_configs` | **keep** | delete |
 | `locations` (geocode cache) | **keep** | delete |
@@ -203,9 +349,9 @@ Added to `quarry/store/__main__.py` alongside the existing `init` /
 - **Labels deleted in both modes.** Labels are tied to postings; deleting
   postings orphans them. More importantly, the existing labels were made
   against a polluted feed (location-driven "not interested" marks teach the
-  classifier the wrong thing now that the filter will handle location).
-  Deleting them gives a clean restart; the classifier goes cold (returns 0.0)
-  until ≥20 fresh labels exist. Confirmed acceptable.
+  classifier the wrong thing now that the filter handles location at read
+  time). Deleting gives a clean restart; the classifier goes cold (returns
+  0.0) until ≥20 fresh labels exist. Confirmed acceptable.
 - **Classifier `.pkl` models deleted in both modes.** Trained on the old
   labels; useless once labels are gone, and `ClassifierScorer._try_load_model`
   would otherwise load a stale model that disagrees with the new corpus.
@@ -217,6 +363,10 @@ Added to `quarry/store/__main__.py` alongside the existing `init` /
   the total wipe.
 - **`pipeline_configs` kept in keep-companies mode.** Pure ranking config, no
   data dependency; keeping avoids re-defaulting the ranking setup.
+- **`user_settings` kept in keep-companies mode.** Preserves the ideal role
+  description and the location filter config (including the new
+  `none_strictness` setting) — so the read-time filter works immediately
+  after reset without re-configuring.
 
 ### Implementation
 
@@ -234,37 +384,65 @@ Both modes report what was deleted: table name → row count, and number of
 ### Safety
 
 - Confirmation prompt by default. The prompt names what's actually being
-  deleted in the chosen mode, e.g. for `--keep-companies`:
-  `"This will delete 1808 postings, 31 labels, 6 classifier models, and 137 crawl runs (keeping 29 companies, watchlist, and search queries). Type 'reset' to confirm: "`
-  Counts are queried before prompting. Full mode names "all companies,
-  watchlist, search queries, and settings" as also deleted.
+  deleted in the chosen mode, with live counts, e.g. for `--keep-companies`:
+  `"This will delete 1808 postings, 31 labels, 6 classifier models, and 137 crawl runs (keeping 29 companies, watchlist, search queries, and settings). Type 'reset' to confirm: "`
+  Full mode names "all companies, watchlist, search queries, and settings" as
+  also deleted. Counts are queried before prompting.
 - `--yes` flag skips the prompt (for scripted use / re-runs).
-- The command refuses to run if `settings.db_path` points at a non-existent
-  file (nothing to reset) — prints an error and exits non-zero.
+- Refuses to run if `settings.db_path` points at a non-existent file (nothing
+  to reset) — prints an error and exits non-zero.
 
 ---
 
 ## Testing
 
-### `location_match_status` helper (`tests/test_pipeline_filter.py`)
+### `evaluate_location_match` (`tests/test_pipeline_filter.py`)
 
-- `match`: posting in target city → `"match"`.
-- `match`: posting within `nearby_radius` but not in target city → `"match"`.
-- `mismatch`: posting in a far-away single city, `work_model=None` →
-  `"mismatch"` (the Irvine case).
-- `unknown`: `work_model == "remote"` with `accept_remote=True` → `"unknown"`.
-- `unknown`: no parseable locations (`location=None`) → `"unknown"`.
-- `unknown`: no location filter configured (config is `None`) → `"unknown"`.
-- `unknown`: config present but `target_location`/`accept_states`/
-  `accept_regions` all empty → `"unknown"`.
-- Idempotency: calling `location_match_status` does not mutate the config
-  (verifies `normalize_config` is safe to call defensively).
+Cover every row of the truth table:
 
-### `work_model` badge (`tests/test_ui.py`)
+- onsite + location matches → `passes=True`, `location_relevant=True`,
+  `location_match=True`, `work_type_match=True`.
+- onsite + location doesn't match → `passes=False`, `location_match=False`.
+- hybrid + matches / doesn't match → same shape as onsite.
+- remote + any location (including unparseable) → `passes=True` (when
+  `accept_remote`), `location_relevant=False`.
+- None + matches → `passes=True` (both strictnesses).
+- None + doesn't match, generous → `passes=True`, `work_type_match=True`.
+- None + doesn't match, strict → `passes=False`, `work_type_match=False`.
+- None + unparseable, generous → `passes=True`.
+- None + unparseable, strict → `passes=False`.
+- Filter off (no targets, `accept_remote=false`) → `passes=True`,
+  `location_relevant=False`, badges hidden.
+- Remote-only prefs (`accept_remote=true`, no targets) + onsite posting →
+  `passes=False`, `work_type_match=False`.
+- `evaluate_location_match` does not mutate the config (verifies
+  `normalize_config` is safe to call defensively).
 
-- Render a row with `work_model=None` → assert `badge-unknown` span present.
-- Render a row with `work_model="hybrid"` → assert `badge-hybrid` present and
-  `badge-unknown` absent (no regression).
+### Ingest change (`tests/test_scheduler.py` / `tests/test_pipeline_filter.py`)
+
+- `LocationFilter` no longer in `FILTER_STEPS` — assert the list is
+  `[KeywordBlocklistFilter, TitleKeywordFilter, CompanyFilter]` (by class).
+- A posting that the old `LocationFilter` would have rejected (e.g. Irvine,
+  single remote-less location) now **passes** ingest and is stored.
+  Integration test in `test_scheduler.py` or `test_e2e.py`.
+
+### Read-time filter + badges (`tests/test_ui.py`)
+
+- `/postings` default view hides a posting with `passes=False` (e.g. Irvine,
+  strict mode) and shows one with `passes=True`.
+- `/postings?show_all=1` shows both, with the correct badges.
+- Template render: `work_model=None` + generous → `badge-unknown` present.
+- Template render: `work_type_match=False` → `badge-work-miss` present.
+- Template render: `location_relevant=True` + match → `badge-loc-match`;
+  mismatch → `badge-loc-miss`.
+- Filter off → no location badge, no work-type-miss badge.
+
+### Ingest logging (`tests/test_scheduler.py`)
+
+- After a scan run that filters postings, the log/output contains a
+  `Ingest filter summary:` line with per-`skip_reason` counts.
+- `location` does not appear in the summary (LocationFilter removed from
+  ingest).
 
 ### `reset` command (`tests/test_store_cli.py`)
 
@@ -287,30 +465,56 @@ posting, a label, and a dummy `.pkl` in a temp models dir.
 
 ### Existing tests
 
-All existing tests must continue to pass. No changes to `get_postings_with_scores`
-query shape (the `location_match` key is added in the route, not the query), so
-the query's existing tests are unaffected.
+All existing tests must continue to pass. Tests that currently assert
+ingest-time location filtering need updating to assert read-time filtering
+instead (these are the behavior-change tests, not regressions).
 
 ---
 
 ## Files touched
 
-- `quarry/pipeline/filter.py` — add `location_match_status` helper.
-- `quarry/ui/routes.py` — compute `location_match` per row in `postings()`.
-- `quarry/ui/templates/postings_results.html` — work_model `unknown` badge +
-  location-match badge.
-- `quarry/ui/static/*.css` — `.badge-unknown`, `.badge-loc-match`,
-  `.badge-loc-mismatch`, `.badge-loc-unknown`.
+- `quarry/pipeline/filter.py` — add `evaluate_location_match` +
+  `LocationMatchResult`; remove `LocationFilter` from `FILTER_STEPS` (class
+  stays, used by `evaluate_location_match`).
+- `quarry/config.py` — add `NoneStrictness` enum + `none_strictness` field on
+  `LocationFilterConfig`.
+- `quarry/ui/routes.py` — compute `evaluate_location_match` per row in
+  `postings()`; `show_all` param; default-hide `passes=False`.
+- `quarry/ui/templates/postings_results.html` — two-badge model.
+- `quarry/ui/static/*.css` — `.badge-unknown`, `.badge-work-miss`,
+  `.badge-loc-match`, `.badge-loc-miss`.
+- `quarry/ui/templates/settings.html` (and settings route) —
+  `none_strictness` dropdown in Location Filter section.
+- `quarry/agent/scheduler.py` — `skip_reason_counts` Counter + summary log.
 - `quarry/store/__main__.py` — add `reset` command.
-- `tests/test_pipeline_filter.py` — `location_match_status` tests.
-- `tests/test_ui.py` — badge render tests.
+- `tests/test_pipeline_filter.py` — `evaluate_location_match` truth-table
+  tests; `FILTER_STEPS` membership test.
+- `tests/test_ui.py` — read-time filter + badge render tests.
+- `tests/test_scheduler.py` — ingest-no-longer-filters-location test; ingest
+  logging test.
 - `tests/test_store_cli.py` — `reset` command tests.
 - `docs/STATUS.md` — update after implementation.
 
 ## Sequencing
 
-1. `reset` command + tests (unblocks the actual DB reset you want to do now).
-2. Component 2 (work_model `unknown` badge) — trivial, do alongside.
-3. Component 1 (location-match indicator) + tests.
-4. Run `python -m quarry.store reset --keep-companies`, re-seed labels over
-   the fresh crawl, update `docs/STATUS.md`.
+1. **Component 4 (`reset` command)** + tests — unblocks the actual DB reset
+   you want to do now; smallest, isolated.
+2. **Component 1 (read-time filter)** + truth-table tests — the core change.
+   Remove `LocationFilter` from ingest here too; update ingest tests.
+3. **Component 2 (badges)** + template/CSS — builds on Component 1's fields.
+4. **Component 3 (ingest logging)** — independent, can land anytime after
+   Component 1 (so `location` is gone from the summary, demonstrating the
+   split).
+5. **`none_strictness` Settings UI** — small addition; do alongside
+   Component 1 or 2.
+6. Run `python -m quarry.store reset --keep-companies`, re-label over the
+   fresh crawl, update `docs/STATUS.md`.
+
+## Follow-ups (out of scope)
+
+- GitHub issue #7: TTL to retire stale postings (~60 days).
+- Future: fix any remaining `LocationFilter.check` geographic matching bugs
+  (e.g. ANY-vs-ALL multi-location semantics) — but only if leaks persist
+  after the read-time filter is in place and the corpus is reset.
+- Future: classifier feature enrichment (separate title/body embeddings,
+  structured location/work features).
