@@ -1,7 +1,7 @@
 # Per-user read-time location/work filter, ingest logging, and scoped DB reset
 
 **Date:** 2026-06-19
-**Status:** Approved (spec review round 1 applied — see changelog at bottom)
+**Status:** Refined (spec review rounds 1-2 applied — see changelog at bottom)
 **Context:** Early exploratory phase. The postings feed carries location/work
 mismatches that the *ingest* filter either let through or generated under older
 filter logic, and the UI applies no filtering at read time — so leaks persist
@@ -102,7 +102,9 @@ set)`. So:
 - "either" = both set
 - "neither" (no target, `accept_remote=false`) → `filter_active=False`;
   the filter is effectively off, the read path shows everything, and all
-  match/miss badges are hidden (nothing to match against).
+  match/miss badges are hidden (nothing to match against). **This is the
+  default after the `accept_remote` default change below** — an unconfigured
+  user sees everything, matching today's behavior.
 
 ### Implementation: a single classifier function
 
@@ -124,10 +126,17 @@ class LocationMatchResult(BaseModel):
         return self.work_type_match and (self.location_match or not self.location_relevant)
 
 def evaluate_location_match(
-    posting: JobPosting,
+    location: str | None,
+    work_model: str | None,
     config: LocationFilterConfig | None,
 ) -> LocationMatchResult:
     """Apply the location+work-model truth table for a user.
+
+    Takes the raw posting `location` and `work_model` directly rather than a
+    `JobPosting` instance: `JobPosting` has four required no-default fields
+    (`company_id`, `title`, `title_hash`, `url` — `quarry/models.py:62`), so a
+    shim would need dummy values for all of them just to satisfy the
+    constructor. These two fields are the only inputs the truth table needs.
 
     This is the single source of truth for read-time filtering AND for the
     badges — the UI shows exactly what this function decided.
@@ -161,7 +170,13 @@ Logic:
      onsite posting, whose rejection is on the work-type axis, not location.)
    - If `not location_relevant`: `location_match = True` (don't penalize on
      an axis we're not considering).
-   - If `location_relevant`: re-parse `posting.location` via `parse_location`.
+   - If `location_relevant`: re-parse `location` via `parse_location`.
+     - **Use the `work_model` parameter, NOT `parse_result.work_model`.**
+       `parse_location` re-extracts a `work_model` from the location string
+       (e.g. a prefix like "Remote - San Francisco"), which can differ from
+       the DB's `work_model` column that was passed in. The truth table
+       decides on the *stored* `work_model` (the param); `parse_location`
+       here is only for the `locations` list, not its `work_model` field.
      - **No parseable locations** → `location_match = False` under strict,
        `True` under generous (can't prove it's wrong, be generous). This
        pre-check is required because the shared `geographic_match` helper
@@ -231,22 +246,70 @@ Location Filter section — add a dropdown). Persisted via the existing
 **not** pass `none_strictness`. If left unchanged, every Location Filter save
 would apply the `GENEROUS` default and silently overwrite a previously-saved
 `STRICT` choice. The route MUST read `none_strictness` from `request.form`
-and pass it into the `LocationFilterConfig(...)` constructor. Likewise the
-GET/render side (`settings` route ~`quarry/ui/routes.py:327`) already passes
+and pass it into the `LocationFilterConfig(...)` constructor — read it with
+   a default, `request.form.get("none_strictness", "generous")`, so an old
+   cached browser tab that POSTs without the new field doesn't pass `None`
+   into the enum field and raise a pydantic `ValidationError`. Likewise the
+GET/render side (`settings` route ~`quarry/ui/routes.py:315`) already passes
 `location_f` to the template; the dropdown's `selected` attribute must
 compare against `location_f.none_strictness.value` (the enum's string value,
 not the enum member) to match the option's `value="strict"`/`value="generous"`.
 
+### Config default change: `accept_remote` → `False`
+
+**Blocker if left unchanged:** `LocationFilterConfig.accept_remote` defaults
+to `True` (`quarry/config.py:26`) with `target_location=[]`. Under the new
+`filter_active = targets_set or config.accept_remote`, the *default* config
+gives `targets_set=False, accept_remote=True` → `filter_active=True`, so
+onsite/hybrid postings get `work_type_match = targets_set = False` →
+`passes=False` → **hidden by default**. Today the ingest `LocationFilter.check`
+short-circuits to `passed=True` when no targets are set, so the default shows
+everything; the read-time redesign would silently flip that to "remote-only"
+for any user relying on defaults.
+
+**Fix:** change the `accept_remote` default to `False`. Then the default
+config (no targets, `accept_remote=False`) is the "neither" row →
+`filter_active=False` → show everything, matching today's default behavior.
+The "remote-only" capability is preserved for users who *explicitly* set
+`accept_remote=True` (with no targets).
+
+**Backward compat (documented behavior change, no auto-migration):** the
+class-default change affects only configs that have **never been saved** to
+the DB (no `location_filter` row in `user_settings`) — those fall back to the
+class default, which goes `True` → `False`, so an unconfigured user flips from
+the old "remote-only under the read-time filter" trap to the correct
+`filter_active=False` show-all. Any **explicitly saved** `accept_remote`
+value in the DB is preserved unchanged by `model_validate` (pydantic v2 reads
+the stored JSON field), so a user who deliberately saved `accept_remote=True`
+with no targets keeps remote-only behavior — which is what they asked for.
+`reset --keep-companies` preserves `user_settings`, so it does NOT change
+whichever case applies. Users who want show-all after deploy should either add
+target locations or toggle `accept_remote` off in the Settings UI. This is an
+intentional, documented migration; the single user reconfigures his own
+settings as part of Sequencing step 6. (A load-time auto-reset of
+`accept_remote` when no targets are set was considered and rejected as a
+silent fallback — silent config mutation on read is the kind of fallback
+this project avoids.)
+
 ### Read-time wiring
 
-In `postings()` (`quarry/ui/routes.py:43`):
+In `postings()` (`quarry/ui/routes.py:42`):
 
 1. Load the location filter config (`ss.get_location_filter()` with
    `settings.filters.location_filter` fallback, same pattern as
-   `scheduler.py:283-285`). `normalize_config()` once.
-2. For each row in `results`, build a `JobPosting` shim (only `.location` and
-   `.work_model` needed) and call `evaluate_location_match(...)`. Attach
-   `work_type_match`, `location_match`, `location_relevant`, `passes` to the
+   `scheduler.py:276-279`). `normalize_config()` once. **Make `normalize_config`
+   idempotent first** (`quarry/config.py`): it currently *appends* to
+   `_resolved_target_coords` without clearing, so calling it twice on the
+   same instance duplicates coordinates. Clear all `_resolved_*` private
+   attrs at the start of `normalize_config` so it is safe to call repeatedly
+   (the set-based attrs are already idempotent via `.add()`; only the list
+   attr is not). This matters because `get_location_filter()` already calls
+   `normalize_config()` on load (`settings_service.py`), and defensive calls
+   elsewhere would otherwise accumulate duplicates.
+2. For each row in `results`, call `evaluate_location_match(row.location,
+   row.work_model, config)` (the row dict already carries `location` and
+   `work_model` from the SQL query — no shim needed). Attach `work_type_match`,
+   `location_match`, `location_relevant`, `passes`, and `filter_active` to the
    row dict.
 3. **Default view: hide postings where `passes == False`.** Add a `show_all`
    query param (`/postings?show_all=1`). When `show_all` is falsy, filter the
@@ -254,10 +317,45 @@ In `postings()` (`quarry/ui/routes.py:43`):
    `show_all=1`, show everything with badges visible.
    - Rationale for post-query filtering in Python rather than SQL: the truth
      table needs `parse_location` per row (geonamescache, in-memory) which
-     can't be pushed to SQL. Page size is small (≤ `PER_PAGE + 1`), so
-     over-fetching and filtering in Python is fine. Over-fetch factor: fetch
-     `per_page * K` rows (K=3 estimate) before filtering to keep pagination
-     roughly correct; document the approximation in a comment.
+     can't be pushed to SQL.
+   - **Fetch-until-full loop (within a page), not a fixed over-fetch factor.**
+     A fixed `per_page * K` over-fetch is unsound for restrictive filters:
+     the query orders by `composite_score` DESC then `similarity_score` DESC
+     (`quarry/store/db.py:~857`), which is location-agnostic, so the top N by
+     score can be entirely out-of-area — yielding a partial or empty page even
+     when in-area postings exist further down. Instead, fetch in batches
+     (e.g. `limit=per_page*4`, increasing `offset`) and filter in Python until
+     a full page of `passes=True` rows is assembled or the corpus is
+     exhausted. Cap the total fetch (e.g. 10× `per_page`) to bound worst-case
+     work; if the cap is hit with a partial page, serve the partial page and
+     set `has_next=False` (the 10× factor is a tunable constant — raise it if
+     partial pages are common under restrictive filters). **Each batch query
+     must pass the existing SQL filter params** (`interest`, `title_search`,
+     `body_search`, `similarity_threshold`) so the Python post-filter
+     *composes* with the SQL filters rather than running against an
+     unfiltered corpus.
+   - **`has_next` semantics under post-filtering.** The current code computes
+     `has_next = len(results) > per_page` on the SQL result
+     (`quarry/ui/routes.py:64`). Under post-query filtering, base `has_next`
+     on whether the fetch loop yielded *more than* `per_page` passing rows
+     (i.e. there are passing rows beyond this page), not on the raw SQL row
+     count. When `show_all=1`, skip the fetch loop entirely and use the
+     existing single-query path (`limit=per_page+1`, original `has_next`
+     logic) — guard the loop with `if not show_all:` so it never triggers for
+     the show-all view.
+   - **Known cross-page approximation (documented limitation).** The route
+     keeps stateless `page`-based pagination (`offset = (page-1)*per_page`,
+     `quarry/ui/routes.py:52`). Under post-filtering the SQL offset does NOT
+     account for rows that prior pages filtered out, so page N re-scans part
+     of page N-1's SQL window and **visible rows may duplicate across page
+     boundaries**. The fetch-until-full loop fixes *empty-page* problems
+     within a page but does not fix this cross-page overlap. For an internal
+     exploratory tool this is accepted and documented; `show_all=1` is the
+     exact-pagination escape hatch (no post-filtering → page-based offset is
+     exact, no duplicates). If duplicates become annoying in the labeling
+     workflow, switch the filtered view to an `offset`-cursor (carry the SQL
+     offset actually consumed in the Next link instead of `page`) — tracked
+     as a follow-up, not part of this spec.
 4. Badges are rendered from the attached fields (Component 2).
 
 **Ingest change:** remove `LocationFilter()` from `FILTER_STEPS` in
@@ -336,6 +434,45 @@ Trace of the previously-broken cases (now fixed by `filter_active`):
 
 Add `.badge-unknown`, `.badge-work-miss`, `.badge-loc-match`, `.badge-loc-miss`
 to the existing stylesheet, reusing the `.badge` base; only color differs.
+Suggested palette aligned with the existing badges: `.badge-unknown` grey
+(like a neutral/secondary badge), `.badge-work-miss` / `.badge-loc-miss` red
+(match `.badge-negative`'s red), `.badge-loc-match` green (a positive
+accent). The implementer may pick exact hexes to fit the existing palette.
+
+### `show_all` toggle + param forwarding
+
+The `show_all` param is undiscoverable without a UI element and is silently
+dropped by existing links/forms, so both must be addressed:
+
+- **Toggle UI:** add a link in the `postings.html` toolbar (near the
+  interest filter) — `show_all=1` when currently filtered (label "Show all"),
+  and a link back to the filtered view (no `show_all`) when currently showing
+  all (label "Show only matches").
+- **Forward `show_all` everywhere state is carried:** pagination Next/Prev
+  links (`postings_results.html:68,74`), label-form actions (`:41,47,54`),
+  interest-filter links (`postings.html:28`), the "Clear filters" link
+  (`postings.html:67`), the search form's `hx-include`
+  (`postings.html:49,63`) selectors AND a hidden
+  `<input type="hidden" name="show_all" value="1" />` (gated `if show_all`)
+  inside the search `<form>` so the non-HTMX "Search" button submit
+  (`postings.html:70`) also preserves it — the form is `method="GET"` and
+  only forwards its own named inputs, so `hx-include` alone is not enough,
+  and the `retrain`/`scan` return redirects (`postings.html:10,19` use
+  `return_interest`; add `return_show_all` read in the `retrain`/`scan`
+  routes and pass it through `url_for('ui.postings', ...)` — those routes
+  already build the redirect from individual `return_*` form fields, so this
+  is an additive change, not a fixed-param-list override). Likewise the
+  `label` route (`quarry/ui/routes.py:91`) must read
+  `request.args.get('show_all')` and pass it through its redirect to
+  `ui.postings` — the label forms carry `show_all` in their action query
+  string, and the route already forwards `return_interest`/`title_q`/`body_q`
+  the same way. Without this,
+  clicking Next, labeling, searching, or clearing text filters drops
+  `show_all` and silently reverts to the filtered view.
+  - **Clear-filters design note (deliberate):** forwarding `show_all` on the
+    "Clear filters" link is intentional — "clear" clears the *text* filters
+    (`title_q`/`body_q`), not the location/work preference, so the user
+    stays in their chosen show-all/filtered view after clearing text.
 
 ---
 
@@ -370,8 +507,17 @@ In `scheduler.run_once`:
 
 `skip_reason` values are already the filter `decision.skip_reason` strings:
 `blocklist`, `title_keyword`, `company_allow_skip`, `company_deny`. With
-`LocationFilter` removed from ingest, `location` will no longer appear —
-which is itself the point (location is no longer an ingest filter).
+`LocationFilter` removed from ingest, `location` will no longer appear in the
+summary — which is itself the point (location is no longer an ingest filter).
+
+**Coupling note (Component 1 ↔ Component 4):** the summary reflects *this
+run's* decisions only. Pre-existing rows in the per-row CSV log from prior
+runs (when `LocationFilter` was still at ingest) still carry
+`skip_reason="location"`; those are historical and not re-summarized. The
+summary is only misleading if the DB is *not* reset after deploying Component
+1 — the `reset --keep-companies` step in Sequencing step 6 clears this. The
+Component 1 implementation itself does not depend on Component 4; this is a
+operational-expectations note, not a code dependency.
 
 ### Why not a structured log / metrics table
 
@@ -405,6 +551,7 @@ Added to `quarry/store/__main__.py` alongside the existing `init` /
 | `user_posting_state` (labels) | delete | delete |
 | `user_enriched_postings` | delete | delete |
 | `crawl_runs` | delete | delete |
+| `classifier_versions` | delete | delete |
 | `quarry/models/classifier_*.pkl` | delete | delete |
 | `companies` | **keep** | delete |
 | `user_watchlist` | **keep** | delete |
@@ -412,6 +559,8 @@ Added to `quarry/store/__main__.py` alongside the existing `init` /
 | `user_settings` (ideal role, location filter, etc.) | **keep** | delete |
 | `users` (default user row) | **keep** | delete |
 | `pipeline_configs` | **keep** | delete |
+| `agent_actions` | **keep** | delete |
+| `system_settings` | **keep** | delete |
 | `locations` (geocode cache) | **keep** | delete |
 
 ### Rationale on judgment calls
@@ -422,9 +571,19 @@ Added to `quarry/store/__main__.py` alongside the existing `init` /
   classifier the wrong thing now that the filter handles location at read
   time). Deleting gives a clean restart; the classifier goes cold (returns
   0.0) until ≥20 fresh labels exist. Confirmed acceptable.
-- **Classifier `.pkl` models deleted in both modes.** Trained on the old
-  labels; useless once labels are gone, and `ClassifierScorer._try_load_model`
-  would otherwise load a stale model that disagrees with the new corpus.
+- **Classifier `.pkl` models AND `classifier_versions` rows deleted in both
+  modes.** The `.pkl`s are trained on the old labels; useless once labels are
+  gone, and `ClassifierScorer._try_load_model` would otherwise load a stale
+  model that disagrees with the new corpus. `classifier_versions` rows
+  reference those `.pkl` paths via `model_path` (`quarry/store/models.py:221`),
+  so deleting the files without the rows leaves zombies with dangling paths.\  `user_classifier_scores` FKs to `classifier_versions` with
+  `ondelete="SET NULL"` (`models.py:407`), and is itself deleted first, so
+  the row deletion is FK-safe.
+- **`agent_actions` / `system_settings` acknowledged.** Neither has FKs to
+  anything being deleted. Full mode's `drop_all`/`create_all` handles them
+  transparently; `--keep-companies` mode implicitly keeps them (no targeted
+  DELETE). Listed in the table above for completeness so the implementer
+  doesn't forget they exist.
 - **`crawl_runs` deleted in both modes.** Reference `company_id` (not
   `posting_id`) so not technically orphaned, but their counts become
   meaningless historical noise after a clean slate.
@@ -440,13 +599,28 @@ Added to `quarry/store/__main__.py` alongside the existing `init` /
 
 ### Implementation
 
-`--keep-companies` mode deletes only the posting-derived tables, via targeted
-`DELETE FROM <table>` statements in dependency order (children before parents,
-honoring foreign keys). Full mode uses `Base.metadata.drop_all` +
-`create_all` (same as `init_db` but destructive), then re-seeds the default
-user. Both modes remove `quarry/models/classifier_*.pkl` via glob, with the
-path computed from `_MODELS_DIR` in `quarry/rank/train.py` (already an
-absolute path) rather than a hardcoded relative path.
+`--keep-companies` mode deletes only the posting-derived tables (plus
+`classifier_versions`), via targeted `DELETE FROM <table>` statements in
+dependency order (children before parents, honoring foreign keys). Full mode
+uses `Base.metadata.drop_all` + `create_all` (same as `init_db` but
+destructive), then re-seeds the default user (reuse the existing `init_db`
+default-user seeding logic in `quarry/store/db.py` — don't re-inline it).
+Both modes remove
+`quarry/models/classifier_*.pkl` via glob, with the path computed from
+`_MODELS_DIR` in `quarry/rank/train.py` (already an absolute path —
+`Path(__file__).parent.parent / "models"`, resolved at import time) rather
+than a hardcoded relative path; `quarry/store/__main__.py` must add the
+`from quarry.rank.train import _MODELS_DIR` import.
+
+**CASCADE note (don't be fooled by zero row counts):** every posting-derived
+child table (`user_posting_state`, `user_similarity_scores`,
+`user_classifier_scores`, `user_enriched_postings`, `user_ranking_scores`,
+`job_posting_locations`) uses `ondelete="CASCADE"` to `job_postings`, and
+`crawl_runs` CASCADEs to `companies` (`quarry/store/models.py`). Deleting the
+parent first would auto-empty the children, making subsequent explicit child
+DELETEs no-ops with row-count 0. Use children-before-parents order so the
+reported per-table row counts are meaningful on a first run; the order is
+safe either way because of CASCADE.
 
 Both modes report what was deleted: table name → row count, and number of
 `.pkl` files removed.
@@ -497,13 +671,20 @@ Cover every row of the truth table:
   `work_type_match=True`, `passes=True`; template renders
   `work: unknown (generous)` (distinct from filter-off+None, which renders
   nothing — this is the case the 4-boolean model couldn't distinguish).
-- `evaluate_location_match` does not mutate the config (verifies
-  `normalize_config` is safe to call defensively).
+- `evaluate_location_match` does not mutate the config.
+- **`normalize_config` idempotency — standalone test in `tests/test_config.py`:**
+  construct a `LocationFilterConfig` with a target that resolves coordinates,
+  call `normalize_config()` twice on the same instance, and assert
+  `len(config._resolved_target_coords)` is unchanged by the second call (the
+  bug being fixed is the `.append()` without clearing). Do NOT rely on the
+  `evaluate_location_match` side-effect assertion alone — that function does
+  not call `normalize_config` (the route does, before the loop), so a buried
+  side-effect check would not catch a regression in `normalize_config` itself.
 
 ### Ingest change (`tests/test_scheduler.py` / `tests/test_pipeline_filter.py`)
 
 - **Update the existing `TestFilterSteps.test_filter_steps_list_exists`**
-  (`tests/test_pipeline_filter.py:682-689`), which currently asserts
+  (`tests/test_pipeline_filter.py:684-689`), which currently asserts
   `len(FILTER_STEPS) == 4` and `isinstance(FILTER_STEPS[3], LocationFilter)`.
   After the change it must assert `len == 3` and the list is
   `[KeywordBlocklistFilter, TitleKeywordFilter, CompanyFilter]` (by class),
@@ -512,6 +693,13 @@ Cover every row of the truth table:
   (grep `skip_reason="location"`, `LocationFilter`, ingest + location in
   `test_scheduler.py` / `test_e2e.py`); rewrite each to assert read-time
   behavior instead. List each in the implementation plan.
+  - **Exception — do NOT rewrite `TestLocationFilter` direct-`check` tests**
+    (e.g. `tests/test_pipeline_filter.py` lines ~370 and ~435, which assert
+    `skip_reason="location"` by calling `LocationFilter.check` directly).
+    The `LocationFilter` class stays in the module and `check` still works
+    internally (now delegating matching to `geographic_match`); only its
+    membership in `FILTER_STEPS` changes. These unit tests cover the retained
+    class and must keep passing unchanged.
 - A posting that the old `LocationFilter` would have rejected (e.g. Irvine,
   single remote-less location) now **passes** ingest and is stored.
   Integration test in `test_scheduler.py` or `test_e2e.py`.
@@ -535,6 +723,15 @@ Cover every row of the truth table:
   `badge-unknown` here).
 - **Filter off + `work_model=hybrid` → `badge-hybrid` present, no match/miss
   badge** (factual badge survives, assessment hidden).
+- **Fetch-loop + SQL-filter composition:** seed postings with mixed
+  locations and interests; apply BOTH an `interest` SQL filter and a
+  restrictive location config; assert the default (filtered) view assembles a
+  full `per_page` page via the fetch loop (not a partial page) — i.e. the
+  loop passes `interest`/`title_search`/`body_search` to each batch and the
+  Python post-filter composes correctly.
+- **`show_all` forwarding end-to-end:** visit `/postings?show_all=1`, submit
+  a label for a posting, and assert the redirect back to `postings` includes
+  `show_all=1` (covers the `return_show_all` path; the most-used interaction).
 
 ### Settings round-trip (`tests/test_ui.py` / `tests/test_settings_service.py`)
 
@@ -574,11 +771,18 @@ posting, a label, and a dummy `.pkl` in a temp models dir.
 ### Existing tests
 
 All existing tests must continue to pass except the **named behavior-change
-break**: `TestFilterSteps.test_filter_steps_list_exists`
-(`tests/test_pipeline_filter.py:682-689`), which must be updated as described
-above. Any other test asserting ingest-time location filtering (found via the
-grep audit) is also a behavior-change update, not a regression. All other
-existing tests must pass unchanged.
+breaks**: `TestFilterSteps.test_filter_steps_list_exists`
+(`tests/test_pipeline_filter.py:684-689`), which must be updated as described
+above; and two assertion tests broken by the `accept_remote` default change
+(True → False): `test_location_filter_config_defaults`
+(`tests/test_config.py:63`, `assert config.accept_remote is True` → `is False`)
+and `TestLocationFilter.test_empty_config`
+(`tests/test_settings_service.py:217`, `assert result.accept_remote is True`
+→ `is False`). Note `tests/test_settings_service.py:178` also asserts
+`accept_remote is True` but is preceded by an explicit `accept_remote=True`
+input at line 168, so it stays green. Any other test asserting ingest-time
+location filtering (found via the grep audit) is also a behavior-change
+update, not a regression. All other existing tests must pass unchanged.
 
 ---
 
@@ -594,6 +798,10 @@ existing tests must pass unchanged.
   `postings()`; `show_all` param; default-hide `passes=False`; **update
   `settings_location` to read/pass `none_strictness`** (round-trip fix).
 - `quarry/ui/templates/postings_results.html` — two-badge model.
+- `quarry/ui/templates/postings.html` — `show_all` toggle link; forward
+  `show_all` on interest-filter links, Clear-filters link, search form
+  `hx-include` + hidden `show_all` input, and retrain/scan `return_show_all`
+  hidden inputs.
 - `quarry/ui/static/*.css` — `.badge-unknown`, `.badge-work-miss`,
   `.badge-loc-match`, `.badge-loc-miss`.
 - `quarry/ui/templates/settings.html` (and settings route) —
@@ -687,16 +895,85 @@ Deferred (optional, noted by reviewer, not applied):
 - `location_relevant` becomes derivable if `filter_active` + `targets_set`
   are exposed to the template; kept as stored state for template simplicity.
 
-### Not yet covered
+### Round 2 (2026-06-19) — pi-refine: feasibility/accuracy + correctness/regression (applied)
 
-Two planned review angles did **not** complete (subagent dispatch was
-SIGTERM-killed by timeout before returning): **plan feasibility/accuracy**
-(spec's codebase claims, `reset` table-list completeness, FK dependency
-order, `_MODELS_DIR` path) and **correctness/regression risk**
-(pagination approximation under post-query Python filtering, SQL/Python
-filter composition with interest/title/body filters, multi-user correctness
-of the `USER_ID` constant, `reset` FK/CASCADE integrity, config backward
-compat for stored JSON without `none_strictness`, `show_all` default-hide UX
-after reset). These should be re-run in a fresh session (with the
-`pi-review` skill now installed) before implementation begins — they may
-surface blockers the applied round did not see.
+Ran the two review angles that Round 1's subagent dispatch did not complete,
+via the `pi-refine` skill cycling `plan-reviewer` across a 3-model roster
+(`opencode-go/deepseek-v4-pro`, `opencode-go/qwen3.6-plus`,
+`opencode-go/kimi-k2.6`) for 6 iterations. All load-bearing claims were
+re-verified against the code. Two new blockers found and fixed (both missed
+by Round 1); plus completion gaps.
+
+Applied fixes:
+
+1. **`accept_remote` default hides all onsite/hybrid by default (blocker,
+   kimi iter-3).** `LocationFilterConfig.accept_remote` defaults to `True`
+   (`config.py:26`) with empty targets, so the new
+   `filter_active = targets_set or accept_remote` makes the *default* config
+   `filter_active=True` → onsite/hybrid `work_type_match=False` → hidden.
+   Round 1's truth-table "neither" row assumed `accept_remote=false`, which
+   isn't the actual default. Fix: change the default to `False` (unconfigured
+   → show all, matching today); remote-only preserved for users who
+   explicitly set `accept_remote=True`. Migration note added distinguishing
+   never-saved (falls back to new class default) from explicitly-saved
+   (preserved by `model_validate`). Named the two extra test breaks
+   (`test_config.py:63`, `test_settings_service.py:217`); `:178` stays green.
+2. **Pagination cross-page duplicates (blocker, kimi iter-3; refined qwen
+   iter-5).** Page-based `offset=(page-1)*per_page` + post-query Python
+   filtering means page N re-scans rows page N-1 filtered out → duplicate
+   visible rows across pages. The fetch-until-full loop fixes empty pages
+   within a page but not cross-page overlap. Fix: documented as a known
+   limitation with `show_all=1` as the exact-pagination escape hatch;
+   offset-cursor pagination noted as a future follow-up. Loop caps at 10×
+   `per_page` (tunable) and passes SQL filter params per batch.
+3. **`JobPosting` shim friction (deepseek iter-1).** `JobPosting` has 4
+   required no-default fields; a shim would need dummy values. Narrowed
+   `evaluate_location_match` to take `location`/`work_model` strings
+   directly. Added: use the `work_model` param, NOT `parse_result.work_model`
+   (which re-extracts from the location string and can differ).
+4. **`classifier_versions` table omitted from reset (deepseek iter-1).** Its
+   rows reference the glob-deleted `.pkl` paths via `model_path` → zombie
+   rows. Now deleted in both modes; `agent_actions`/`system_settings`
+   acknowledged; CASCADE behavior documented (children-before-parents for
+   meaningful row counts).
+5. **`show_all` discoverability + forwarding (kimi iter-3, qwen iter-5, kimi
+   iter-6).** Added a toggle UI and required `show_all` forwarding on
+   pagination links, label forms, interest links, Clear-filters link
+   (deliberate: clears text filters only), search `hx-include` + a hidden
+   `show_all` input for the non-HTMX GET submit, and `return_show_all` in
+   the `retrain`/`scan`/`label` routes. `postings.html` added to Files
+   touched.
+6. **`normalize_config` not idempotent (kimi iter-3, qwen iter-5).**
+   `_resolved_target_coords.append(...)` without clearing duplicates coords
+   on repeated calls. Now requires clearing `_resolved_*` at the start; added
+   a standalone idempotency test in `tests/test_config.py` (not just a
+   side-effect assertion in `evaluate_location_match`).
+7. **`settings_location` crash on stale form POSTs (kimi iter-3).** A cached
+   browser tab POSTing without `none_strictness` would pass `None` to the
+   enum field → `ValidationError`. Fix: `request.form.get("none_strictness",
+   "generous")`.
+8. **Ingest↔reset coupling note (deepseek iter-1).** Pre-existing CSV
+   `skip_reason="location"` rows are historical; the per-run summary is only
+   misleading if the DB isn't reset. Documented as operational expectations.
+9. **Line-number / citation accuracy.** Corrected `routes.py` settings GET
+   (`:327`→`:315`), `scheduler.py` config load (`:283-285`→`:276-279`), test
+   ref (`:682-689`→`:684-689`), `db.py` ORDER BY (`:714`→`:~857`),
+   `postings()` (`:43`→`:42`).
+10. **Test-plan completeness.** Added: `accept_remote` default + migration
+    behavior, fetch-loop + SQL-filter composition, `show_all` forwarding
+    end-to-end (label redirect), `normalize_config` standalone idempotency.
+
+Verified clean in Round 2 (no blockers): truth-table ↔ `passes` formula
+row-by-row; badge tables ↔ template branches; reset table completeness
+(18 tables = 9 delete + 9 keep) and FK/CASCADE ordering; `evaluate_location_match`
+/ `geographic_match` / `LocationMatchResult` `@computed_field` /
+`NoneStrictness` enum coercion / `get_postings_with_scores(limit, offset,
+interest, title_search, body_search, similarity_threshold)` / Click `reset`
+command shape / `_MODELS_DIR` absolute-path glob / `set_location_filter`
+round-trip; single-user `USER_ID=1` framing; config backward compat for
+stored JSON without `none_strictness` (pydantic v2 default-fills);
+`show_all` default-hide after reset (empty corpus → empty feed, no issue);
+no leak window in the ingest→read-time migration ordering.
+
+The two Round-1 "not yet covered" angles (plan feasibility/accuracy and
+correctness/regression risk) are now covered. Plan is ready for implementation.
