@@ -7,6 +7,7 @@ Usage:
 import asyncio
 import csv
 import logging
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -317,6 +318,7 @@ def run_once(db: Database, user_id: int = 1) -> dict:
     total_new = 0
     total_duplicates = 0
     total_filtered = 0
+    skip_reason_counts: Counter[str] = Counter()
     companies_crawled = 0
     companies_errored = 0
 
@@ -403,6 +405,8 @@ def run_once(db: Database, user_id: int = 1) -> dict:
                 else:
                     company_filtered += 1
                     total_filtered += 1
+                    if skip_reason:
+                        skip_reason_counts[skip_reason] += 1
 
             run.postings_new = company_new
             run.status = "success"
@@ -480,6 +484,8 @@ def run_once(db: Database, user_id: int = 1) -> dict:
             total_duplicates += 1
         else:
             total_filtered += 1
+            if skip_reason:
+                skip_reason_counts[skip_reason] += 1
 
     log_file.close()
 
@@ -539,5 +545,11 @@ def run_once(db: Database, user_id: int = 1) -> dict:
         "total_filtered": total_filtered,
         "crawl_log": str(log_path),
     }
+    log.info(
+        "Ingest filter summary: %s",
+        ", ".join(
+            f"{name}={count}" for name, count in sorted(skip_reason_counts.items())
+        ),
+    )
     log.info("Run complete: %s", summary)
     return summary

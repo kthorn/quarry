@@ -1,3 +1,4 @@
+import logging
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -71,6 +72,70 @@ def _make_raw_posting(
 
 
 class TestRunOnce:
+    def test_run_once_logs_ingest_filter_summary(self, seeded_db, caplog):
+        mock_postings = [
+            _make_raw_posting(title="Senior Engineer"),
+            _make_raw_posting(title="Senior Data Analyst"),
+        ]
+
+        with (
+            patch("quarry.agent.scheduler._crawl_company") as mock_crawl,
+            patch("quarry.agent.scheduler._crawl_search_queries") as mock_search,
+            patch(
+                "quarry.agent.scheduler.settings.filters",
+                FiltersConfig(
+                    keyword_blocklist=KeywordBlocklistConfig(keywords=["Engineer"])
+                ),
+            ),
+        ):
+            mock_crawl.return_value = mock_postings
+            mock_search.return_value = []
+
+            set_ideal_embedding(seeded_db, "Senior people analytics leader role")
+
+            with caplog.at_level(logging.INFO, logger="quarry.agent.scheduler"):
+                summary = run_once(seeded_db)
+
+            assert summary["total_filtered"] == 1
+            summary_lines = [
+                rec.message
+                for rec in caplog.records
+                if "Ingest filter summary:" in rec.message
+            ]
+            assert len(summary_lines) == 1
+            assert "blocklist=1" in summary_lines[0]
+
+    def test_run_once_filter_summary_excludes_location(self, seeded_db, caplog):
+        mock_postings = [
+            _make_raw_posting(title="Senior Engineer"),
+        ]
+
+        with (
+            patch("quarry.agent.scheduler._crawl_company") as mock_crawl,
+            patch("quarry.agent.scheduler._crawl_search_queries") as mock_search,
+            patch(
+                "quarry.agent.scheduler.settings.filters",
+                FiltersConfig(
+                    keyword_blocklist=KeywordBlocklistConfig(keywords=["Engineer"])
+                ),
+            ),
+        ):
+            mock_crawl.return_value = mock_postings
+            mock_search.return_value = []
+
+            set_ideal_embedding(seeded_db, "Senior people analytics leader role")
+
+            with caplog.at_level(logging.INFO, logger="quarry.agent.scheduler"):
+                run_once(seeded_db)
+
+            summary_lines = [
+                rec.message
+                for rec in caplog.records
+                if "Ingest filter summary:" in rec.message
+            ]
+            assert len(summary_lines) == 1
+            assert "location=" not in summary_lines[0]
+
     def test_run_once_processes_companies(self, seeded_db):
         mock_postings = [_make_raw_posting()]
 
