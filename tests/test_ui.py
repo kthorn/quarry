@@ -7,6 +7,8 @@ DB-level tests have been updated for the Phase 3 multi-user schema:
 - Status/similarity score accessed via dedicated per-user tables
 """
 
+from unittest.mock import patch
+
 import pytest
 
 from quarry.config import LocationFilterConfig, NoneStrictness
@@ -775,6 +777,22 @@ def app_with_mixed_locations(app, tmp_path):
 
 
 @pytest.fixture
+def no_config_filter_fallback():
+    """Neutralize the config.yaml location_filter fallback in quarry/ui/routes.
+
+    `postings()` falls back to `app_settings.filters.location_filter` when no
+    DB-saved filter exists. In environments with a `quarry/config.yaml`
+    (gitignored, present in the main checkout but not worktrees), that fallback
+    is a filter-ON config — which would make "filter off" tests fail depending
+    on which checkout they run in. This fixture forces the fallback to None so
+    filter-off tests are hermetic regardless of config.yaml.
+    """
+    with patch("quarry.ui.routes.app_settings") as mock_settings:
+        mock_settings.filters = None
+        yield
+
+
+@pytest.fixture
 def app_with_location_filter(app_with_mixed_locations, tmp_path):
     """App with mixed-location postings and a strict SF-only location filter."""
     db = Database(tmp_path / "test.db")
@@ -816,7 +834,9 @@ class TestReadTimeFilterDefaultView:
         # The filtered posting should have miss badges
         assert "badge-loc-miss" in html
 
-    def test_no_filter_shows_all_postings(self, app_with_mixed_locations):
+    def test_no_filter_shows_all_postings(
+        self, app_with_mixed_locations, no_config_filter_fallback
+    ):
         """With no saved location filter, all postings are visible."""
         client = app_with_mixed_locations.test_client()
         response = client.get("/postings")
@@ -914,7 +934,9 @@ class TestReadTimeBadges:
         assert "badge-loc-miss" in html
         assert "✗ location" in html
 
-    def test_filter_off_none_work_model_no_badges(self, app_with_mixed_locations):
+    def test_filter_off_none_work_model_no_badges(
+        self, app_with_mixed_locations, no_config_filter_fallback
+    ):
         """Filter off + work_model=None -> no work badge AND no location badge."""
         # The ML Engineer has work_model=hybrid, but one postings has work_model=None
         # The fixture creates postings with None work_model (Data Engineer SF)
@@ -929,7 +951,9 @@ class TestReadTimeBadges:
         assert "badge-loc-match" not in html
         assert "badge-loc-miss" not in html
 
-    def test_filter_off_hybrid_badge_survives(self, app_with_mixed_locations):
+    def test_filter_off_hybrid_badge_survives(
+        self, app_with_mixed_locations, no_config_filter_fallback
+    ):
         """Filter off + work_model=hybrid -> badge-hybrid, no match/miss."""
         client = app_with_mixed_locations.test_client()
         response = client.get("/postings")
