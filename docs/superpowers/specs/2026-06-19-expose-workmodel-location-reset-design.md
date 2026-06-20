@@ -1,7 +1,7 @@
 # Per-user read-time location/work filter, ingest logging, and scoped DB reset
 
 **Date:** 2026-06-19
-**Status:** Approved (pending spec review)
+**Status:** Approved (spec review round 1 applied — see changelog at bottom)
 **Context:** Early exploratory phase. The postings feed carries location/work
 mismatches that the *ingest* filter either let through or generated under older
 filter logic, and the UI applies no filtering at read time — so leaks persist
@@ -100,8 +100,9 @@ set)`. So:
 - "remote-only" = `accept_remote=true, no target_location`
 - "in-person SF only" = `target_location=[SF], accept_remote=false`
 - "either" = both set
-- "neither" (no target, `accept_remote=false`) → nothing passes; the filter
-  is effectively off and the read path shows everything with badges hidden.
+- "neither" (no target, `accept_remote=false`) → `filter_active=False`;
+  the filter is effectively off, the read path shows everything, and all
+  match/miss badges are hidden (nothing to match against).
 
 ### Implementation: a single classifier function
 
@@ -109,10 +110,18 @@ Add `quarry/pipeline/filter.py`:
 
 ```python
 class LocationMatchResult(BaseModel):
-    work_type_match: bool       # does the posting's work_model fit user prefs?
-    location_match: bool        # does a parsed location hit a target?
-    location_relevant: bool     # is location even considered? (False for remote)
-    passes: bool                # overall: should this be shown by default?
+    filter_active: bool        # is any location/work preference configured?
+    work_type_match: bool      # does the posting's work_model fit user prefs?
+    location_match: bool       # does a parsed location hit a target?
+    location_relevant: bool    # is location even considered? (False for remote / no targets)
+
+    @computed_field
+    @property
+    def passes(self) -> bool:
+        """Overall: should this be shown by default?"""
+        if not self.filter_active:
+            return True
+        return self.work_type_match and (self.location_match or not self.location_relevant)
 
 def evaluate_location_match(
     posting: JobPosting,
@@ -125,44 +134,76 @@ def evaluate_location_match(
     """
 ```
 
+`passes` is a `@computed_field` (not stored state) because it is fully
+ derivable from the other four booleans; storing it separately risks drift.
+
+Define `targets_set = bool(config.target_location or config.accept_states
+or config.accept_regions)` and `filter_active = targets_set or
+config.accept_remote` (when `config is None`, `filter_active=False`).
+
 Logic:
 
-1. If `config` is `None` or has no `target_location`/`accept_states`/
-   `accept_regions` **and** `accept_remote` is false → filter is off.
-   Return `passes=True, location_relevant=False, work_type_match=True,
-   location_match=True` (badges hidden — nothing to match against).
-2. If `config` is `None` but `accept_remote` is true and no target locations
-   → only remote is wanted. Treat as "remote-only" preference.
-3. Work-type axis:
+1. **Filter off** (`not filter_active`): return `filter_active=False,
+   work_type_match=True, location_relevant=False, location_match=True`.
+   `passes` computes to `True` (show everything). The template hides all
+   match/miss badges via the `filter_active` gate (Component 2) — nothing to
+   match against.
+2. **Work-type axis:**
    - `work_model == "remote"` → `work_type_match = config.accept_remote`.
-   - `work_model in ("onsite", "hybrid")` → `work_type_match = bool(target
-     locations set)` (in-person/hybrid wanted only if user has targets).
+   - `work_model in ("onsite", "hybrid")` → `work_type_match = targets_set`
+     (in-person/hybrid wanted only if the user has targets).
    - `work_model is None` → generous: `work_type_match = True`; strict:
-     `work_type_match = bool(target locations set)` (same as in-person).
-4. Location axis (only `location_relevant` when work-type is non-remote and
-   the user has targets):
-   - `work_model == "remote"` and `accept_remote` → `location_relevant =
-     False`, `location_match = True` (location irrelevant for remote).
-   - Otherwise `location_relevant = True`. Re-parse `posting.location` via
-     `parse_location`. `location_match = True` if any parsed location hits
-     `LocationFilter`'s geographic match (reuse `LocationFilter.check`'s
-     city/`nearby_radius`/state/region logic — see "Reuse" below).
-   - No parseable locations → `location_match = False` under strict, `True`
-     under generous (can't prove it's wrong, be generous).
-5. `passes = work_type_match AND (location_match OR NOT location_relevant)`.
+     `work_type_match = targets_set` (treat None like in-person).
+3. **Location axis:**
+   - `location_relevant = filter_active AND targets_set AND work_model !=
+     "remote"`. (Remote postings ignore location; when the user has no
+     targets — e.g. remote-only prefs — location is irrelevant even for an
+     onsite posting, whose rejection is on the work-type axis, not location.)
+   - If `not location_relevant`: `location_match = True` (don't penalize on
+     an axis we're not considering).
+   - If `location_relevant`: re-parse `posting.location` via `parse_location`.
+     - **No parseable locations** → `location_match = False` under strict,
+       `True` under generous (can't prove it's wrong, be generous). This
+       pre-check is required because the shared `geographic_match` helper
+       (below) is only meaningful when locations exist.
+     - Otherwise `location_match = geographic_match(parse_result, config)`
+       (the extracted shared helper — see "Reuse" below).
+4. `passes` is computed by the `@computed_field` above.
 
-**Reuse of `LocationFilter`'s geographic matching:** rather than duplicate the
-city/`nearby_radius`/`accept_states`/`accept_regions` matching in
-`evaluate_location_match`, the function constructs a `LocationFilterConfig`
-with only the geographic fields, calls `LocationFilter().check(...)` with a
-synthetic `RawPosting` carrying the posting's title/location/description, and
-interprets `passed=True` as `location_match=True`. This keeps geographic
-matching in exactly one place (`LocationFilter`), so any future fix to that
-logic updates both the (now read-time) filter and the badges. The synthetic
-`RawPosting` is needed because `LocationFilter.check` reads `raw.title` /
-`raw.location` / `raw.description` (the `KeywordBlocklistFilter` does, but
-`LocationFilter` reads only `raw.location` and `raw.title` for logging —
-verified).
+### Reuse: extract a shared `geographic_match` helper
+
+The city / `nearby_radius` / `accept_states` / `accept_regions` matching loop
+is currently inlined in `LocationFilter.check` (`quarry/pipeline/filter.py`,
+the block after the empty-`parse_result` early return). Extract it into a
+module-level helper:
+
+```python
+def geographic_match(parse_result: ParseResult, config: LocationFilterConfig) -> bool:
+    """True if any parsed location hits a target city / nearby_radius /
+    accepted state / accepted region. Assumes parse_result.locations is
+    non-empty and config has at least one target — callers gate on those."""
+```
+
+`LocationFilter.check` keeps its existing early returns (no-filter-configured,
+remote bypass, empty-`parse_result`) but delegates the actual matching loop
+to `geographic_match`. `evaluate_location_match` calls `geographic_match`
+**directly** (after its own gating: `location_relevant`, `targets_set`,
+non-remote, and non-empty parse_result).
+
+**Why extract rather than call `LocationFilter.check` with a synthetic
+`RawPosting`:** `LocationFilter.check`'s signature takes `(raw, posting,
+parse_result, company_name, config)` and reads `raw.title`/`raw.location`
+only in `log.debug` calls — the real matching input is `parse_result`, not
+`raw`. Calling it from `evaluate_location_match` would require constructing
+synthetic `RawPosting` + `JobPosting` shims purely to satisfy the signature,
+AND would re-trigger `LocationFilter.check`'s own early returns
+(no-filter → `passed=True`; empty-parse_result → `passed=True`), which
+**contradict** `evaluate_location_match`'s strict-mode decisions and would
+produce wrong badges (e.g. unparseable+strict would render `✓ location`;
+remote-only-prefs+onsite would render `✓ location`). Extracting
+`geographic_match` avoids the synthetic shims, eliminates the
+double-handling, and keeps the geographic matching logic in exactly one
+place so any future fix updates both code paths.
 
 ### New config: None-strictness
 
@@ -182,6 +223,19 @@ Default generous preserves current behavior. Editable from the Settings UI
 alongside the existing location filter fields (the Settings UI already has a
 Location Filter section — add a dropdown). Persisted via the existing
 `UserSettingsService.set_location_filter` path.
+
+**Settings route round-trip (must update `settings_location`,
+`quarry/ui/routes.py:465`):** the current route constructs
+`LocationFilterConfig(...)` with an explicit field list (`target_location`,
+`accept_remote`, `nearby_radius`, `accept_states`, `accept_regions`) and does
+**not** pass `none_strictness`. If left unchanged, every Location Filter save
+would apply the `GENEROUS` default and silently overwrite a previously-saved
+`STRICT` choice. The route MUST read `none_strictness` from `request.form`
+and pass it into the `LocationFilterConfig(...)` constructor. Likewise the
+GET/render side (`settings` route ~`quarry/ui/routes.py:327`) already passes
+`location_f` to the template; the dropdown's `selected` attribute must
+compare against `location_f.none_strictness.value` (the enum's string value,
+not the enum member) to match the option's `value="strict"`/`value="generous"`.
 
 ### Read-time wiring
 
@@ -224,32 +278,41 @@ to assert read-time behavior instead.
 
 | condition | badge |
 |---|---|
-| `work_type_match == True` and `work_model` in (remote/hybrid/onsite) | `<work_model>` (existing colored badge) |
-| `work_type_match == True` and `work_model is None` (generous) | `work: unknown (generous)` (grey) |
-| `work_type_match == False` (strict None, no targets) | `work: ✗` (red) |
-| filter off (no prefs) | hidden |
+| `filter_active == False` and `work_model` in (remote/hybrid/onsite) | `<work_model>` (existing colored badge — factual, always shown when known) |
+| `filter_active == False` and `work_model is None` | hidden (no preference configured → no match assessment) |
+| `filter_active == True` and `work_model` in (remote/hybrid/onsite) and `work_type_match` | `<work_model>` (existing colored badge) |
+| `filter_active == True` and `work_model is None` and `work_type_match` (generous) | `work: unknown (generous)` (grey) |
+| `filter_active == True` and `not work_type_match` | `work: ✗` (red) |
+
+Note: when `filter_active == False`, the existing colored `work_model` badge
+still renders for known work models (it's factual posting info, not a
+preference assessment); only the match/miss assessment is hidden. For
+`work_model is None` + filter off, nothing renders.
 
 ### Location badge
 
 | condition | badge |
 |---|---|
-| `location_relevant == False` (remote, or filter off) | hidden |
-| `location_match == True` | `✓ location` (green) |
-| `location_match == False` | `✗ location` (red) |
+| `not filter_active` or `not location_relevant` | hidden |
+| `location_relevant` and `location_match` | `✓ location` (green) |
+| `location_relevant` and `not location_match` | `✗ location` (red) |
 
 ### Template (`postings_results.html`)
 
-Replace the existing work_model badge block with:
+Replace the existing work_model badge block with (note the `filter_active`
+gate on the assessment branches — this is what distinguishes filter-off from
+remote-only-prefs + None-generous, which produce identical `work_type_match`
+values but must render differently):
 
 ```html
 {% if row.work_model %}
   <span class="badge badge-{{ row.work_model }}">{{ row.work_model }}</span>
-{% elif row.work_type_match %}
+{% elif row.filter_active and row.work_type_match %}
   <span class="badge badge-unknown">work: unknown (generous)</span>
-{% else %}
+{% elif row.filter_active and not row.work_type_match %}
   <span class="badge badge-work-miss">work: ✗</span>
 {% endif %}
-{% if row.location_relevant %}
+{% if row.filter_active and row.location_relevant %}
   {% if row.location_match %}
     <span class="badge badge-loc-match">✓ location</span>
   {% else %}
@@ -258,9 +321,16 @@ Replace the existing work_model badge block with:
 {% endif %}
 ```
 
-(When the filter is off, `work_type_match=True, location_relevant=False` →
-only the existing `work_model` badge for non-None, nothing extra. Matches the
-"filter off = badges hidden" rule.)
+Trace of the previously-broken cases (now fixed by `filter_active`):
+
+- Filter off + `work_model=None`: first branch skipped (None falsy), both
+  `elif`s gated on `filter_active` (False) → nothing renders. ✓ (was wrongly
+  rendering `work: unknown (generous)`.)
+- Remote-only prefs + onsite posting: `work_type_match=False`, first branch
+  renders `onsite` (factual), `elif` → `work: ✗`, `location_relevant=False`
+  → location badge hidden. ✓ (was wrongly rendering `✓ location`.)
+- Filter off + `work_model=hybrid`: first branch renders `hybrid` (factual),
+  assessment branches gated off → no match/miss badge. ✓
 
 ### CSS
 
@@ -406,36 +476,74 @@ Cover every row of the truth table:
 - hybrid + matches / doesn't match → same shape as onsite.
 - remote + any location (including unparseable) → `passes=True` (when
   `accept_remote`), `location_relevant=False`.
+- remote + `accept_remote=false` (in-person-only prefs, posting mislabeled
+  remote) → `passes=False`, `work_type_match=False`, `location_relevant=False`.
+  (Truth-table edge case the first draft omitted; covered by the work-type
+  axis rule `work_model=="remote" → work_type_match = accept_remote`.)
 - None + matches → `passes=True` (both strictnesses).
 - None + doesn't match, generous → `passes=True`, `work_type_match=True`.
 - None + doesn't match, strict → `passes=False`, `work_type_match=False`.
 - None + unparseable, generous → `passes=True`.
 - None + unparseable, strict → `passes=False`.
-- Filter off (no targets, `accept_remote=false`) → `passes=True`,
-  `location_relevant=False`, badges hidden.
+- Filter off (no targets, `accept_remote=false`) → `filter_active=False`,
+  `passes=True`, `location_relevant=False`, badges hidden.
+- Filter off + `work_model=None` → same booleans; template renders NO
+  work-type badge (regression guard for the `filter_active` gate — first
+  draft wrongly rendered `work: unknown (generous)` here).
 - Remote-only prefs (`accept_remote=true`, no targets) + onsite posting →
-  `passes=False`, `work_type_match=False`.
+  `passes=False`, `work_type_match=False`, `location_relevant=False`
+  (location badge hidden — rejection is on work-type, not location).
+- Remote-only prefs + `work_model=None`, generous → `filter_active=True`,
+  `work_type_match=True`, `passes=True`; template renders
+  `work: unknown (generous)` (distinct from filter-off+None, which renders
+  nothing — this is the case the 4-boolean model couldn't distinguish).
 - `evaluate_location_match` does not mutate the config (verifies
   `normalize_config` is safe to call defensively).
 
 ### Ingest change (`tests/test_scheduler.py` / `tests/test_pipeline_filter.py`)
 
-- `LocationFilter` no longer in `FILTER_STEPS` — assert the list is
-  `[KeywordBlocklistFilter, TitleKeywordFilter, CompanyFilter]` (by class).
+- **Update the existing `TestFilterSteps.test_filter_steps_list_exists`**
+  (`tests/test_pipeline_filter.py:682-689`), which currently asserts
+  `len(FILTER_STEPS) == 4` and `isinstance(FILTER_STEPS[3], LocationFilter)`.
+  After the change it must assert `len == 3` and the list is
+  `[KeywordBlocklistFilter, TitleKeywordFilter, CompanyFilter]` (by class),
+  with `LocationFilter` absent. This is the named breaking test.
+- Audit `tests/` for any other test asserting ingest-time location filtering
+  (grep `skip_reason="location"`, `LocationFilter`, ingest + location in
+  `test_scheduler.py` / `test_e2e.py`); rewrite each to assert read-time
+  behavior instead. List each in the implementation plan.
 - A posting that the old `LocationFilter` would have rejected (e.g. Irvine,
   single remote-less location) now **passes** ingest and is stored.
   Integration test in `test_scheduler.py` or `test_e2e.py`.
+- `geographic_match` helper: unit-test the extracted loop directly (city
+  match, `nearby_radius` match, state match, region match, no-match) so the
+  extraction is covered independently of `LocationFilter.check`.
 
 ### Read-time filter + badges (`tests/test_ui.py`)
 
 - `/postings` default view hides a posting with `passes=False` (e.g. Irvine,
   strict mode) and shows one with `passes=True`.
 - `/postings?show_all=1` shows both, with the correct badges.
-- Template render: `work_model=None` + generous → `badge-unknown` present.
-- Template render: `work_type_match=False` → `badge-work-miss` present.
-- Template render: `location_relevant=True` + match → `badge-loc-match`;
-  mismatch → `badge-loc-miss`.
-- Filter off → no location badge, no work-type-miss badge.
+- Template render: `work_model=None` + `filter_active=True` + generous →
+  `badge-unknown` present.
+- Template render: `filter_active=True` + `work_type_match=False` →
+  `badge-work-miss` present.
+- Template render: `filter_active=True` + `location_relevant=True` + match →
+  `badge-loc-match`; mismatch → `badge-loc-miss`.
+- **Filter off + `work_model=None` → no work-type badge AND no location badge**
+  (regression guard for the `filter_active` gate; first draft rendered
+  `badge-unknown` here).
+- **Filter off + `work_model=hybrid` → `badge-hybrid` present, no match/miss
+  badge** (factual badge survives, assessment hidden).
+
+### Settings round-trip (`tests/test_ui.py` / `tests/test_settings_service.py`)
+
+- Saving the Location Filter form with `none_strictness=strict` persists
+  `strict` and survives a subsequent GET (no silent reset to `generous`).
+- Saving any other Location Filter field (e.g. toggling `accept_remote`)
+  preserves the previously-saved `none_strictness` (regression guard for the
+  `settings_location` route fix).
+- Template dropdown `selected` matches `location_f.none_strictness.value`.
 
 ### Ingest logging (`tests/test_scheduler.py`)
 
@@ -465,21 +573,26 @@ posting, a label, and a dummy `.pkl` in a temp models dir.
 
 ### Existing tests
 
-All existing tests must continue to pass. Tests that currently assert
-ingest-time location filtering need updating to assert read-time filtering
-instead (these are the behavior-change tests, not regressions).
+All existing tests must continue to pass except the **named behavior-change
+break**: `TestFilterSteps.test_filter_steps_list_exists`
+(`tests/test_pipeline_filter.py:682-689`), which must be updated as described
+above. Any other test asserting ingest-time location filtering (found via the
+grep audit) is also a behavior-change update, not a regression. All other
+existing tests must pass unchanged.
 
 ---
 
 ## Files touched
 
 - `quarry/pipeline/filter.py` — add `evaluate_location_match` +
-  `LocationMatchResult`; remove `LocationFilter` from `FILTER_STEPS` (class
-  stays, used by `evaluate_location_match`).
+  `LocationMatchResult`; extract `geographic_match` helper from
+  `LocationFilter.check`; remove `LocationFilter` from `FILTER_STEPS` (class
+  stays, `check` delegates matching to `geographic_match`).
 - `quarry/config.py` — add `NoneStrictness` enum + `none_strictness` field on
   `LocationFilterConfig`.
 - `quarry/ui/routes.py` — compute `evaluate_location_match` per row in
-  `postings()`; `show_all` param; default-hide `passes=False`.
+  `postings()`; `show_all` param; default-hide `passes=False`; **update
+  `settings_location` to read/pass `none_strictness`** (round-trip fix).
 - `quarry/ui/templates/postings_results.html` — two-badge model.
 - `quarry/ui/static/*.css` — `.badge-unknown`, `.badge-work-miss`,
   `.badge-loc-match`, `.badge-loc-miss`.
@@ -488,8 +601,9 @@ instead (these are the behavior-change tests, not regressions).
 - `quarry/agent/scheduler.py` — `skip_reason_counts` Counter + summary log.
 - `quarry/store/__main__.py` — add `reset` command.
 - `tests/test_pipeline_filter.py` — `evaluate_location_match` truth-table
-  tests; `FILTER_STEPS` membership test.
-- `tests/test_ui.py` — read-time filter + badge render tests.
+  tests; `geographic_match` unit tests; update `test_filter_steps_list_exists`.
+- `tests/test_ui.py` — read-time filter + badge render tests; settings
+  `none_strictness` round-trip test.
 - `tests/test_scheduler.py` — ingest-no-longer-filters-location test; ingest
   logging test.
 - `tests/test_store_cli.py` — `reset` command tests.
@@ -518,3 +632,71 @@ instead (these are the behavior-change tests, not regressions).
   after the read-time filter is in place and the corpus is reset.
 - Future: classifier feature enrichment (separate title/body embeddings,
   structured location/work features).
+
+## Spec review changelog
+
+### Round 1 (2026-06-19) — test-plan & design-simplicity review (applied)
+
+A fresh-context reviewer flagged 4 blockers and 5 fix-worthy-now gaps; all
+load-bearing claims were verified against the code before applying.
+
+Applied fixes:
+
+1. **`LocationFilter.check` reuse double-handling (blocker).** The first
+   draft called `LocationFilter.check` via a synthetic `RawPosting`.
+   `LocationFilter.check` has early returns (no-filter-configured →
+   `passed=True`; empty-`parse_result` → `passed=True`) that contradict
+   `evaluate_location_match`'s strict-mode decisions and would render wrong
+   badges (unparseable+strict → `✓ location`; remote-only+onsite →
+   `✓ location`). Replaced with an extracted `geographic_match(parse_result,
+   config)` helper that both `LocationFilter.check` and
+   `evaluate_location_match` call; `evaluate_location_match` gates
+   (`location_relevant`, `targets_set`, non-remote, non-empty parse_result)
+   before calling it, eliminating the double-handling and the synthetic
+   shim.
+2. **4-boolean model indistinguishability (blocker).** Filter-off and
+   remote-only-prefs + None-generous produce identical `work_type_match` /
+   `location_relevant` / `location_match` but must render differently. Added
+   a `filter_active` flag; the template gates all match/miss assessment
+   branches on `filter_active`. Factual `work_model` badges (remote/hybrid/
+   onsite) still render when the filter is off.
+3. **Template `work: unknown (generous)` on filter-off + None (blocker).**
+   Caused by #2; fixed by the `filter_active` gate on the `elif` branch.
+4. **`passes` redundant as stored state.** Made it a `@computed_field`
+   derived from `filter_active` / `work_type_match` / `location_match` /
+   `location_relevant` to prevent drift.
+5. **Named the breaking test.** `TestFilterSteps.test_filter_steps_list_exists`
+   (`tests/test_pipeline_filter.py:682-689`) asserts `len(FILTER_STEPS)==4`
+   with `LocationFilter` at index 3; must be updated to `len==3` without
+   `LocationFilter`. Added an explicit grep audit for any other ingest-time
+   location tests.
+6. **Settings route round-trip data loss.** `settings_location`
+   (`quarry/ui/routes.py:465`) constructs `LocationFilterConfig` with an
+   explicit field list missing `none_strictness`; saving any location change
+   would silently reset strictness to `GENEROUS`. Spec now requires the
+   route to read/pass `none_strictness`, and the template dropdown to use
+   `.value` for the `selected` comparison.
+7. **Added truth-table edge case** `remote` + `accept_remote=false` →
+   `passes=False` (in-person-only prefs, posting mislabeled remote), with a
+   test case.
+
+Deferred (optional, noted by reviewer, not applied):
+
+- Unify the work-model `elif`/`else` branches into a single computed-label
+  branch (current 3-branch form is readable; marginal).
+- `location_relevant` becomes derivable if `filter_active` + `targets_set`
+  are exposed to the template; kept as stored state for template simplicity.
+
+### Not yet covered
+
+Two planned review angles did **not** complete (subagent dispatch was
+SIGTERM-killed by timeout before returning): **plan feasibility/accuracy**
+(spec's codebase claims, `reset` table-list completeness, FK dependency
+order, `_MODELS_DIR` path) and **correctness/regression risk**
+(pagination approximation under post-query Python filtering, SQL/Python
+filter composition with interest/title/body filters, multi-user correctness
+of the `USER_ID` constant, `reset` FK/CASCADE integrity, config backward
+compat for stored JSON without `none_strictness`, `show_all` default-hide UX
+after reset). These should be re-run in a fresh session (with the
+`pi-review` skill now installed) before implementation begins — they may
+surface blockers the applied round did not see.
